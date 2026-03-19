@@ -13,7 +13,8 @@ st.set_page_config(
 
 # 2. OneDrive 직링크 설정 (팀장님이 주신 링크에 download=1 파라미터 강제 결합)
 # 이 링크는 브라우저에 넣었을 때 바로 '다운로드'가 시작되어야 코드가 읽을 수 있습니다.
-ONEDRIVE_URL = "https://1drv.ms/u/c/bf9f49139356d2bc/IQB_0lgA5yr9TJbCEDknO6fUAf4Kb26AQ0bO3UBjlLSwANw?e=3222f4"
+ONEDRIVE_URL = "https://1drv.ms/u/c/bf9f49139356d2bc/IQB_0lgA5yr9TJbCEDknO6fUAf4Kb26AQ0bO3UBjlLSwANw?e=iS1LOa"
+
 LOCAL_DB_NAME = "temp_ev_management.db"
 
 @st.cache_data(ttl=3600) # 1시간마다 OneDrive에서 새 파일을 받아옴 (필요시 시간 조절)
