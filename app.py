@@ -26,16 +26,6 @@ except APIError as e:
     ```sql
     ALTER TABLE public.status_history DISABLE ROW LEVEL SECURITY;
     ```
-    
-    또는 (보안이 중요한 경우):
-    
-    ```sql
-    CREATE POLICY "읽기 허용"
-    ON public.status_history
-    FOR SELECT
-    TO anon, authenticated
-    USING (true);
-    ```
     """)
     st.stop()
 except Exception as e:
