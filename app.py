@@ -19,21 +19,6 @@ COL_STATUS = "충전기상태"
 COL_ERROR_STATE = "충전이상상태"
 COL_STATION_NAME = "충전소명"
 
-# ============================================================
-# ⚡ 슬래시 문제 해결:
-#    PostgREST는 select 파라미터에서 / 를 JSON 연산자로 인식함
-#    "급속/완속" 같은 컬럼은 select에 넣을 수 없음
-#    → 검색 인덱스 로딩 시에는 슬래시 컬럼 제외
-#    → 상세 조회 시에만 select("*") 사용 (소량이라 타임아웃 없음)
-# ============================================================
-
-# 검색 인덱스용 컬럼 (슬래시 없는 것만)
-INDEX_COLUMNS = ",".join([
-    COL_SITE_ID, COL_STATION_ID, COL_CHARGER_ID,
-    COL_COLLECTED_AT, COL_STATUS, COL_ERROR_STATE,
-    COL_STATION_NAME, "주소1", "상세주소", "제조사", "모델명"
-])
-
 # 4. Supabase 연결
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -44,155 +29,131 @@ except Exception as e:
 
 
 # ============================================================
-# 데이터 로딩 함수
+# ⚡ 핵심 전략 변경:
+#    전체 데이터를 먼저 로딩하지 않음 (타임아웃 원인)
+#    → 사용자가 키워드 입력 → Supabase에서 ilike로 서버 필터링
+#    → 소량의 결과만 가져옴 → 타임아웃 없음
 # ============================================================
 
-@st.cache_data(ttl=600)
-def load_search_index():
+# 슬래시 없는 안전한 컬럼만 select에 사용
+SAFE_COLUMNS = ",".join([
+    COL_SITE_ID, COL_STATION_ID, COL_CHARGER_ID,
+    COL_COLLECTED_AT, COL_STATUS, COL_ERROR_STATE,
+    COL_STATION_NAME, "주소1", "상세주소", "제조사", "모델명"
+])
+
+
+@st.cache_data(ttl=300)
+def search_by_keyword(keyword: str):
     """
-    검색 인덱스 구축 — 타임아웃 방지를 위해:
-    1) 슬래시 포함 컬럼 제외한 select
-    2) 페이지 나눠서 로드
-    3) 충전기 단위 중복 제거 후 사이트 단위로 그룹핑
+    키워드로 서버에서 직접 검색.
+    충전소명, 주소1, 충전기ID, 충전소ID, 사이트ID 각각에 대해
+    ilike 검색 후 합침.
     """
     try:
-        all_data = []
-        page_size = 1000
-        max_pages = 5  # 최대 5000건
-
-        for page in range(max_pages):
-            offset = page * page_size
-            response = (
-                supabase.table("status_history")
-                .select(INDEX_COLUMNS)
-                .order(COL_COLLECTED_AT, desc=True)
-                .range(offset, offset + page_size - 1)
-                .execute()
-            )
-
-            if not response.data:
-                break
-
-            all_data.extend(response.data)
-
-            # 데이터가 page_size 미만이면 마지막 페이지
-            if len(response.data) < page_size:
-                break
-
-        df = pd.DataFrame(all_data)
-        if df.empty:
+        keyword = keyword.strip()
+        if not keyword:
             return pd.DataFrame()
 
-        # 충전기ID 기준 중복 제거 (최신 데이터 우선)
-        charger_df = df.drop_duplicates(subset=[COL_CHARGER_ID], keep="first").copy()
+        pattern = f"%{keyword}%"
+        all_data = []
 
-        # 사이트 그룹키 생성
-        charger_df["_group_key"] = charger_df[COL_SITE_ID].astype(str).replace(
-            ["nan", "None", ""], pd.NA
-        )
-        charger_df["_group_key"] = charger_df["_group_key"].fillna(
-            charger_df[COL_STATION_ID].astype(str)
-        )
+        # 여러 컬럼에서 순차적으로 검색 (각각은 빠름)
+        search_targets = [
+            COL_STATION_NAME,  # 충전소명
+            "주소1",            # 주소
+            COL_CHARGER_ID,    # 충전기ID
+            COL_STATION_ID,    # 충전소ID
+            COL_SITE_ID,       # 사이트ID
+            "상세주소",         # 상세주소
+        ]
 
-        # 사이트 단위 요약
-        site_groups = []
-        for group_key, group in charger_df.groupby("_group_key"):
-            first = group.iloc[0]
+        for col in search_targets:
+            try:
+                response = (
+                    supabase.table("status_history")
+                    .select(SAFE_COLUMNS)
+                    .ilike(col, pattern)
+                    .order(COL_COLLECTED_AT, desc=True)
+                    .limit(500)
+                    .execute()
+                )
+                if response.data:
+                    all_data.extend(response.data)
+            except Exception:
+                # 해당 컬럼 검색 실패 시 다음으로
+                continue
 
-            station_name = str(first.get(COL_STATION_NAME, ""))
-            station_id = str(first.get(COL_STATION_ID, ""))
-            site_id = str(first.get(COL_SITE_ID, ""))
-            addr = str(first.get("주소1", ""))
-            addr_detail = str(first.get("상세주소", ""))
-            maker = str(first.get("제조사", ""))
-            charger_count = len(group)
-            charger_ids = ", ".join(group[COL_CHARGER_ID].astype(str).tolist())
+        if not all_data:
+            return pd.DataFrame()
 
-            # 모든 충전소명 모음 (같은 사이트 내 다른 충전소명이 있을 수 있음)
-            all_names = [
-                str(n) for n in group[COL_STATION_NAME].unique()
-                if str(n) not in ["nan", "None", ""]
-            ]
-            all_names_str = " ".join(all_names)
+        df = pd.DataFrame(all_data)
 
-            # 모든 주소 모음
-            all_addrs = []
-            for col in ["주소1", "상세주소"]:
-                if col in group.columns:
-                    for v in group[col].unique():
-                        vs = str(v)
-                        if vs not in ["nan", "None", ""]:
-                            all_addrs.append(vs)
-            all_addrs_str = " ".join(all_addrs)
+        # 중복 제거 (여러 컬럼에서 동일 행이 중복될 수 있음)
+        if COL_CHARGER_ID in df.columns and COL_COLLECTED_AT in df.columns:
+            df = df.drop_duplicates(
+                subset=[COL_CHARGER_ID, COL_COLLECTED_AT], keep="first"
+            )
 
-            # 검색용 통합 텍스트
-            search_text = " ".join([
-                all_names_str, station_id, site_id,
-                all_addrs_str, maker, charger_ids
-            ]).lower()
-
-            # 표시 라벨
-            display_parts = []
-            if station_name and station_name not in ["nan", "None", ""]:
-                display_parts.append(station_name)
-            if addr and addr not in ["nan", "None", ""]:
-                display_parts.append(addr)
-            display_label = " / ".join(display_parts) if display_parts else group_key
-
-            clean = lambda s: "" if s in ["nan", "None", ""] else s
-
-            site_groups.append({
-                "_group_key": group_key,
-                "display_label": display_label,
-                COL_STATION_NAME: clean(station_name),
-                COL_STATION_ID: clean(station_id),
-                COL_SITE_ID: clean(site_id),
-                "주소1": clean(addr),
-                "charger_count": charger_count,
-                "charger_ids": charger_ids,
-                "_search_text": search_text,
-            })
-
-        return pd.DataFrame(site_groups)
+        return df
 
     except APIError as e:
-        error_str = str(e)
-        if "57014" in error_str or "timeout" in error_str.lower():
-            st.error("⏱️ 쿼리 타임아웃! 아래 인덱스를 Supabase에 생성하세요.")
-            st.code("""-- Supabase Dashboard → SQL Editor에서 실행:
-CREATE INDEX IF NOT EXISTS idx_status_collected 
-  ON public.status_history ("수집날짜" DESC);
-CREATE INDEX IF NOT EXISTS idx_status_charger 
-  ON public.status_history ("충전기ID");
-CREATE INDEX IF NOT EXISTS idx_status_site 
-  ON public.status_history ("사이트ID");
-CREATE INDEX IF NOT EXISTS idx_status_station 
-  ON public.status_history ("충전소ID");""", language="sql")
-        else:
-            st.error(f"❌ 검색 인덱스 로딩 실패: {e}")
+        st.error(f"❌ 검색 실패: {e}")
         return pd.DataFrame()
     except Exception as e:
         st.error(f"❌ 시스템 오류: {e}")
         return pd.DataFrame()
 
 
-def keyword_search(site_df: pd.DataFrame, keyword: str) -> pd.DataFrame:
-    """키워드 AND 검색"""
-    if site_df.empty or not keyword.strip():
+def build_site_list(df: pd.DataFrame) -> pd.DataFrame:
+    """검색 결과에서 사이트 단위로 그룹핑"""
+    if df.empty:
         return pd.DataFrame()
-    tokens = keyword.strip().lower().split()
-    mask = pd.Series([True] * len(site_df), index=site_df.index)
-    for token in tokens:
-        mask = mask & site_df["_search_text"].str.contains(token, na=False)
-    return site_df[mask].copy()
+
+    charger_df = df.drop_duplicates(subset=[COL_CHARGER_ID], keep="first").copy()
+
+    # 그룹키: 사이트ID 우선, 없으면 충전소ID
+    charger_df["_group_key"] = charger_df[COL_SITE_ID].astype(str)
+    charger_df.loc[
+        charger_df["_group_key"].isin(["nan", "None", ""]), "_group_key"
+    ] = charger_df.loc[
+        charger_df["_group_key"].isin(["nan", "None", ""]), COL_STATION_ID
+    ].astype(str)
+
+    clean = lambda s: "" if str(s) in ["nan", "None", ""] else str(s)
+
+    site_groups = []
+    for gk, grp in charger_df.groupby("_group_key"):
+        first = grp.iloc[0]
+        station_name = clean(first.get(COL_STATION_NAME, ""))
+        station_id = clean(first.get(COL_STATION_ID, ""))
+        site_id = clean(first.get(COL_SITE_ID, ""))
+        addr = clean(first.get("주소1", ""))
+        charger_count = len(grp)
+
+        parts = []
+        if station_name:
+            parts.append(station_name)
+        if addr:
+            parts.append(addr)
+        display_label = " / ".join(parts) if parts else gk
+
+        site_groups.append({
+            "_group_key": gk,
+            "display_label": display_label,
+            COL_STATION_NAME: station_name,
+            COL_STATION_ID: station_id,
+            COL_SITE_ID: site_id,
+            "주소1": addr,
+            "charger_count": charger_count,
+        })
+
+    return pd.DataFrame(site_groups)
 
 
 @st.cache_data(ttl=300)
 def load_site_history(site_id: str, station_id: str):
-    """
-    사이트 전체 이력 조회
-    → select("*")를 사용하지만, eq 필터가 있어 데이터량이 적으므로 타임아웃 안 남
-    """
+    """사이트 전체 이력 조회 — select(*) 사용 (eq 필터로 소량)"""
     try:
         if site_id:
             response = (
@@ -203,7 +164,7 @@ def load_site_history(site_id: str, station_id: str):
                 .limit(1000)
                 .execute()
             )
-        else:
+        elif station_id:
             response = (
                 supabase.table("status_history")
                 .select("*")
@@ -212,6 +173,8 @@ def load_site_history(site_id: str, station_id: str):
                 .limit(500)
                 .execute()
             )
+        else:
+            return pd.DataFrame()
 
         df = pd.DataFrame(response.data)
         if not df.empty:
@@ -260,7 +223,7 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
     """사이트 전체 대시보드"""
 
     if df.empty:
-        st.warning(f"'{site_label}'에 해당하는 데이터가 없습니다.")
+        st.warning(f"'{site_label}'에 해당하는 이력 데이터가 없습니다.")
         return
 
     df["상태분류"] = df.apply(categorize_status, axis=1)
@@ -333,10 +296,8 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
         return cid
 
     selected_charger = st.selectbox(
-        "충전기 선택",
-        charger_list,
-        format_func=charger_label,
-        key="charger_detail_select",
+        "충전기 선택", charger_list,
+        format_func=charger_label, key="charger_detail_select",
     )
 
     charger_df = df[df[COL_CHARGER_ID] == selected_charger].copy()
@@ -442,7 +403,9 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
             default=df["상태분류"].unique().tolist(), key="filter_status",
         )
     with col3:
-        show_count = st.slider("표시 개수", 10, min(500, len(df)), min(100, len(df)), 10)
+        show_count = st.slider(
+            "표시 개수", 10, min(500, len(df)), min(100, len(df)), 10
+        )
 
     filtered = df[
         (df[COL_CHARGER_ID].isin(filter_charger)) &
@@ -463,7 +426,8 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
 
     st.dataframe(
         display_df.style.map(
-            color_status, subset=["상태분류"] if "상태분류" in display_df.columns else []
+            color_status,
+            subset=["상태분류"] if "상태분류" in display_df.columns else []
         ),
         use_container_width=True, height=400,
     )
@@ -487,96 +451,122 @@ st.caption("충전기 실시간 이력 관제 — 키워드 검색 → 사이트
 st.sidebar.header("📡 관제 타겟")
 st.sidebar.caption(connection_status)
 
-# ── 검색 인덱스 로드 ──
-with st.spinner("검색 인덱스 로딩 중..."):
-    site_df = load_search_index()
-
-if site_df.empty:
-    st.error("검색 인덱스를 불러올 수 없습니다.")
-    st.markdown("""
-    ### 🛠️ 해결 방법
-    
-    **Supabase Dashboard → SQL Editor**에서 아래 인덱스를 생성하세요:
-    """)
-    st.code("""-- 인덱스 생성 (한 번만 실행하면 됩니다)
-CREATE INDEX IF NOT EXISTS idx_status_collected 
-  ON public.status_history ("수집날짜" DESC);
-CREATE INDEX IF NOT EXISTS idx_status_charger 
-  ON public.status_history ("충전기ID");
-CREATE INDEX IF NOT EXISTS idx_status_site 
-  ON public.status_history ("사이트ID");
-CREATE INDEX IF NOT EXISTS idx_status_station 
-  ON public.status_history ("충전소ID");
-CREATE INDEX IF NOT EXISTS idx_status_name 
-  ON public.status_history ("충전소명");""", language="sql")
-    st.stop()
-
-st.sidebar.success(f"충전소(사이트) {len(site_df)}곳 로드됨")
-
-# ── 키워드 검색 ──
+# ── 검색 UI ──
 st.sidebar.markdown("---")
-st.sidebar.markdown("**충전소명, 주소, 충전기ID** 등\n아무 단어를 입력하세요.")
+st.sidebar.markdown(
+    "**충전소명, 주소, 충전기ID** 등\n"
+    "키워드를 입력하고 검색 버튼을 누르세요."
+)
 
 keyword = st.sidebar.text_input(
     "🔍 검색어",
-    placeholder="예: 노원, 서울 종로, 인왕산 ...",
+    placeholder="예: 노원, 서울종로, 인왕산 ...",
     key="main_keyword",
 )
 
-if not keyword.strip():
-    st.info("👈 왼쪽 검색창에 **충전소명**, **주소**, **충전기ID** 등 키워드를 입력하세요.")
-    with st.expander("💡 검색 예시", expanded=True):
+search_clicked = st.sidebar.button("🔍 검색", key="search_btn", use_container_width=True)
+
+# ── 세션 상태 관리 ──
+if "search_results" not in st.session_state:
+    st.session_state.search_results = None
+    st.session_state.site_list = None
+    st.session_state.last_keyword = ""
+
+# 검색 실행
+if search_clicked and keyword.strip():
+    with st.spinner(f"'{keyword}' 검색 중..."):
+        # 공백으로 분리된 키워드는 첫 번째 키워드로 서버 검색
+        tokens = keyword.strip().split()
+        primary_keyword = tokens[0]
+
+        raw_results = search_by_keyword(primary_keyword)
+
+        # 나머지 키워드로 Python에서 추가 필터링 (AND 검색)
+        if not raw_results.empty and len(tokens) > 1:
+            for token in tokens[1:]:
+                # 모든 문자열 컬럼에서 검색
+                mask = pd.Series([False] * len(raw_results), index=raw_results.index)
+                for col in raw_results.columns:
+                    if raw_results[col].dtype == object:
+                        mask = mask | raw_results[col].astype(str).str.contains(
+                            token, case=False, na=False
+                        )
+                raw_results = raw_results[mask]
+
+        st.session_state.search_results = raw_results
+        st.session_state.last_keyword = keyword
+
+        if not raw_results.empty:
+            st.session_state.site_list = build_site_list(raw_results)
+        else:
+            st.session_state.site_list = pd.DataFrame()
+
+# 초기 안내 화면
+if st.session_state.search_results is None:
+    st.info("👈 왼쪽에서 **충전소명**, **주소**, **충전기ID** 등을 검색하세요.")
+
+    with st.expander("💡 검색 방법", expanded=True):
         st.markdown(
             "| 입력 | 의미 |\n"
             "|------|------|\n"
             "| `노원` | 충전소명이나 주소에 '노원' 포함 |\n"
             "| `서울 종로` | '서울' AND '종로' 모두 포함 |\n"
-            "| `인왕산 아이파크` | 충전소명 검색 |\n"
-            "| `1111057` | 충전기ID 일부로 검색 |\n"
-            "| `LG` | 제조사로 검색 |"
+            "| `인왕산` | 충전소명에 '인왕산' 포함 |\n"
+            "| `1111057` | 충전기ID 일부 |\n"
         )
+
+    st.markdown("---")
+    st.markdown(
+        "**작동 방식:** 검색어 입력 → 서버에서 직접 필터링 → "
+        "충전소(사이트) 목록 표시 → 선택 시 같은 사이트 전체 충전기 이력을 조회합니다."
+    )
     st.stop()
 
-# 검색 실행
-results = keyword_search(site_df, keyword)
-
-if results.empty:
-    st.warning(f"'{keyword}'에 해당하는 충전소/사이트가 없습니다.")
+# 검색 결과 없음
+if st.session_state.search_results is not None and st.session_state.search_results.empty:
+    st.warning(f"'{st.session_state.last_keyword}'에 해당하는 결과가 없습니다.")
+    st.info("다른 키워드로 검색해 보세요. 충전소명, 주소, 충전기ID 등 다양한 검색이 가능합니다.")
     st.stop()
 
-st.sidebar.markdown(f"**검색 결과: {len(results)}곳**")
+# 검색 결과가 있을 때
+site_list = st.session_state.site_list
 
-# ── 검색 결과 목록 ──
-result_options = []
-for _, row in results.iterrows():
-    label = row["display_label"]
-    count = row["charger_count"]
-    sid = row.get(COL_SITE_ID, "")
-    stid = row.get(COL_STATION_ID, "")
-    tag = f"사이트:{sid}" if sid else f"충전소:{stid}"
-    result_options.append(f"{label}  ({count}대) [{tag}]")
+if site_list is not None and not site_list.empty:
+    st.sidebar.markdown(f"**검색 결과: {len(site_list)}곳**")
 
-selected_result_label = st.sidebar.selectbox(
-    "충전소(사이트) 선택",
-    result_options,
-    key="site_select",
-)
+    result_options = []
+    for _, row in site_list.iterrows():
+        label = row["display_label"]
+        count = row["charger_count"]
+        sid = row.get(COL_SITE_ID, "")
+        stid = row.get(COL_STATION_ID, "")
+        tag = f"사이트:{sid}" if sid else f"충전소:{stid}"
+        result_options.append(f"{label}  ({count}대) [{tag}]")
 
-selected_idx = result_options.index(selected_result_label)
-selected_row = results.iloc[selected_idx]
+    selected_result_label = st.sidebar.selectbox(
+        "충전소(사이트) 선택",
+        result_options,
+        key="site_select",
+    )
 
-sel_site_id = selected_row.get(COL_SITE_ID, "")
-sel_station_id = selected_row.get(COL_STATION_ID, "")
-sel_display = selected_row["display_label"]
+    selected_idx = result_options.index(selected_result_label)
+    selected_row = site_list.iloc[selected_idx]
 
-# ── 사이트 이력 로드 ──
-with st.spinner(f"'{sel_display}' 사이트 이력 조회 중..."):
-    df = load_site_history(sel_site_id, sel_station_id)
+    sel_site_id = selected_row.get(COL_SITE_ID, "")
+    sel_station_id = selected_row.get(COL_STATION_ID, "")
+    sel_display = selected_row["display_label"]
 
-# ── 대시보드 렌더링 ──
-render_site_dashboard(df, sel_display)
+    # 사이트 이력 로드
+    with st.spinner(f"'{sel_display}' 사이트 이력 조회 중..."):
+        df = load_site_history(sel_site_id, sel_station_id)
+
+    # 대시보드 렌더링
+    render_site_dashboard(df, sel_display)
+
+else:
+    st.warning("검색 결과를 사이트별로 그룹핑할 수 없습니다.")
 
 # ── 푸터 ──
 st.sidebar.divider()
-st.sidebar.caption("💓 Project HEARTBEAT v2.1 (Site-Wide + Timeout Fix)")
+st.sidebar.caption("💓 Project HEARTBEAT v3.0 (Server-Side Search)")
 st.sidebar.caption(f"마지막 업데이트: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}")
