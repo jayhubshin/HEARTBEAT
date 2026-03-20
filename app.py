@@ -11,6 +11,8 @@ SUPABASE_URL = "https://gkwtucqymzkvpurcpihk.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdrd3R1Y3F5bXprdnB1cmNwaWhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MDIxNDcsImV4cCI6MjA4OTQ3ODE0N30.V0FnaZ-BaTEYUOKfzxvQ-T4Qk4E83LNIi4GflQsURUg"
 
 # 3. 컬럼명 상수 정의
+COL_SITE_ID = "사이트ID"
+COL_STATION_ID = "충전소ID"
 COL_CHARGER_ID = "충전기ID"
 COL_COLLECTED_AT = "수집날짜"
 COL_STATUS = "충전기상태"
@@ -25,17 +27,14 @@ except Exception as e:
     st.error(f"⚠️ 연결 오류: {e}")
     st.stop()
 
-# 5. 데이터 로딩 함수 (대폭 최적화)
+# 5. 데이터 로딩 함수 (슬래시 문제 완전 해결)
 @st.cache_data(ttl=600)
 def get_station_list():
-    """충전기 ID 목록 조회 (성능 최적화)"""
+    """충전기 목록 조회 (다중 검색 지원)"""
     try:
-        # ⚡ 핵심 최적화:
-        # 1. 최신 데이터만 제한적으로 조회 (전체 스캔 방지)
-        # 2. 필요한 컬럼만 선택 (네트워크 부하 감소)
-        # 3. 인덱스를 활용한 정렬
+        # ⚡ 핵심 해결책: select("*")로 모든 컬럼 조회
         response = supabase.table("status_history") \
-            .select(f"{COL_CHARGER_ID}, {COL_STATION_NAME}") \
+            .select("*") \
             .order(COL_COLLECTED_AT, desc=True) \
             .limit(2000) \
             .execute()
@@ -45,35 +44,51 @@ def get_station_list():
         if df.empty:
             return ["🔍 데이터가 없습니다..."]
         
-        # Python에서 중복 제거 (DB보다 빠름)
+        # Python에서 중복 제거 및 검색 목록 생성
         unique_df = df.drop_duplicates(subset=[COL_CHARGER_ID])
         
-        # 사용자 친화적 표시 형식 생성
-        charger_list = []
+        search_list = []
         for _, row in unique_df.iterrows():
             charger_id = str(row[COL_CHARGER_ID])
             station_name = str(row.get(COL_STATION_NAME, ''))
+            station_id = str(row.get(COL_STATION_ID, ''))
+            site_id = str(row.get(COL_SITE_ID, ''))
             
+            # 검색 가능한 표시 형식 생성
+            display_text = f"{charger_id}"
+            
+            # 충전소명 추가
             if station_name and station_name not in ['nan', 'None', '']:
-                charger_list.append(f"{charger_id} ({station_name})")
-            else:
-                charger_list.append(charger_id)
+                display_text += f" ({station_name})"
+            
+            # ID 정보 추가
+            id_info = []
+            if station_id and station_id not in ['nan', 'None', '']:
+                id_info.append(f"충전소:{station_id}")
+            if site_id and site_id not in ['nan', 'None', '']:
+                id_info.append(f"사이트:{site_id}")
+            
+            if id_info:
+                display_text += f" [{', '.join(id_info)}]"
+            
+            search_list.append(display_text)
         
-        return ["🔍 충전기를 검색/선택하세요..."] + sorted(charger_list)
+        return ["🔍 충전기/충전소/사이트 ID로 검색하세요..."] + sorted(search_list)
         
     except APIError as e:
         st.error(f"❌ 데이터 조회 실패: {e}")
         
-        # 타임아웃 오류 자동 감지 및 해결 가이드 제공
         if 'timeout' in str(e).lower() or '57014' in str(e):
             st.warning("""
             **⏱️ 쿼리 타임아웃 발생!**
             
-            **해결 방법:** Supabase 대시보드 → SQL Editor에서 실행
+            Supabase 대시보드 → SQL Editor에서 인덱스 생성:
             
             ```sql
             CREATE INDEX idx_charger_id ON public.status_history ("충전기ID");
             CREATE INDEX idx_collected_at ON public.status_history ("수집날짜" DESC);
+            CREATE INDEX idx_station_id ON public.status_history ("충전소ID");
+            CREATE INDEX idx_site_id ON public.status_history ("사이트ID");
             ```
             """)
         
@@ -83,24 +98,18 @@ def get_station_list():
         return ["⚠️ 시스템 오류"]
 
 @st.cache_data(ttl=300)
-def load_target_data(target_id):
-    """특정 충전기의 상세 이력 조회 (최적화)"""
+def load_target_data(target_text):
+    """선택된 항목의 상세 이력 조회"""
     try:
-        # 충전기ID 추출
-        if '(' in target_id:
-            charger_id = target_id.split('(')[0].strip()
+        # 충전기ID 추출 (괄호 앞부분)
+        if '(' in target_text:
+            charger_id = target_text.split('(')[0].strip()
         else:
-            charger_id = target_id
+            charger_id = target_text.strip()
         
-        # ⚡ 성능 최적화 포인트:
-        # 1. 인덱스 활용을 위한 WHERE + ORDER BY 조합
-        # 2. 최근 데이터만 제한 (200건)
-        # 3. 필요한 컬럼만 선택
-        
-        select_columns = f"{COL_CHARGER_ID}, {COL_COLLECTED_AT}, {COL_STATUS}, {COL_ERROR_STATE}, {COL_STATION_NAME}, 제조사, 모델명, 충전기용량, 급속/완속, 신호세기, 누적사용량, 충전소 상태"
-        
+        # ⚡ 슬래시 문제 해결: select("*") 사용
         response = supabase.table("status_history") \
-            .select(select_columns) \
+            .select("*") \
             .eq(COL_CHARGER_ID, charger_id) \
             .order(COL_COLLECTED_AT, desc=True) \
             .limit(200) \
@@ -108,22 +117,44 @@ def load_target_data(target_id):
         
         df = pd.DataFrame(response.data)
         
-        # 시간 순서대로 재정렬 (최신 데이터가 마지막)
+        # 시간 순서대로 재정렬
+        if not df.empty:
+            df = df.sort_values(COL_COLLECTED_AT, ascending=True).reset_index(drop=True)
+        
+        return df, charger_id
+        
+    except APIError as e:
+        st.error(f"❌ 데이터 조회 실패: {e}")
+        return pd.DataFrame(), ""
+    except Exception as e:
+        st.error(f"❌ 데이터 로딩 오류: {e}")
+        return pd.DataFrame(), ""
+
+@st.cache_data(ttl=300)
+def search_by_id(search_type, search_value):
+    """충전소ID 또는 사이트ID로 직접 검색"""
+    try:
+        search_column = COL_STATION_ID if search_type == "충전소ID" else COL_SITE_ID
+        
+        response = supabase.table("status_history") \
+            .select("*") \
+            .eq(search_column, search_value) \
+            .order(COL_COLLECTED_AT, desc=True) \
+            .limit(500) \
+            .execute()
+        
+        df = pd.DataFrame(response.data)
+        
         if not df.empty:
             df = df.sort_values(COL_COLLECTED_AT, ascending=True).reset_index(drop=True)
         
         return df
         
     except APIError as e:
-        st.error(f"❌ 데이터 조회 실패: {e}")
-        
-        # 타임아웃 오류 처리
-        if 'timeout' in str(e).lower() or '57014' in str(e):
-            st.warning("⏱️ 쿼리 타임아웃! 인덱스를 생성하거나 조회 기간을 줄여주세요.")
-        
+        st.error(f"❌ 검색 실패: {e}")
         return pd.DataFrame()
     except Exception as e:
-        st.error(f"❌ 데이터 로딩 오류: {e}")
+        st.error(f"❌ 검색 오류: {e}")
         return pd.DataFrame()
 
 def categorize_status(row):
@@ -158,219 +189,268 @@ def color_status(val):
 # ---------------------------------------------------------
 
 st.title("💓 Project HEARTBEAT")
-st.caption("충전기 실시간 이력 관제 (Performance Optimized)")
+st.caption("충전기 실시간 이력 관제 (Multi-Search Support)")
 
 # 사이드바
 st.sidebar.header("📡 관제 타겟")
 st.sidebar.caption(connection_status)
 
-# 성능 정보 표시
-with st.sidebar.expander("⚡ 성능 최적화 상태"):
-    st.write("**현재 설정:**")
-    st.write("✅ 충전기 목록: 최근 2000건")
-    st.write("✅ 상세 이력: 최근 200건")
-    st.write("✅ 캐싱: 10분/5분")
-    st.write("")
-    st.write("**권장 사항:**")
-    st.write("• 데이터베이스 인덱스 생성")
-    st.write("• 정기적 데이터 정리")
+# 검색 모드 선택
+search_mode = st.sidebar.radio(
+    "검색 방법",
+    ["목록에서 선택", "충전소ID 직접 입력", "사이트ID 직접 입력"],
+    index=0
+)
 
-# 충전기 목록 로드
-with st.spinner("충전기 목록 로딩 중..."):
-    all_chargers = get_station_list()
+df = pd.DataFrame()
+display_id = ""
 
-# 오류 상태 확인
-error_states = ["⚠️ 조회 실패", "⚠️ 시스템 오류"]
-if any(state in all_chargers[0] for state in error_states):
-    st.error("데이터를 불러올 수 없습니다.")
+if search_mode == "목록에서 선택":
+    # 기존 방식: 드롭다운에서 선택
+    with st.spinner("목록 로딩 중..."):
+        all_chargers = get_station_list()
     
-    with st.expander("🔧 타임아웃 문제 해결 가이드"):
-        st.markdown("""
-        ### **1단계: 인덱스 생성 (필수)**
-        
-        Supabase 대시보드 → SQL Editor에서 실행:
-        
-        ```sql
-        CREATE INDEX idx_charger_id ON public.status_history ("충전기ID");
-        CREATE INDEX idx_collected_at ON public.status_history ("수집날짜" DESC);
-        CREATE INDEX idx_charger_collected ON public.status_history ("충전기ID", "수집날짜" DESC);
-        ```
-        
-        ### **2단계: 데이터 정리 (선택사항)**
-        
-        오래된 데이터 삭제로 테이블 크기 축소:
-        
-        ```sql
-        -- 현재 데이터 양 확인
-        SELECT COUNT(*) as total_rows,
-               pg_size_pretty(pg_total_relation_size('status_history')) as table_size
-        FROM status_history;
-        
-        -- 6개월 이상 된 데이터 삭제 (예시)
-        DELETE FROM public.status_history 
-        WHERE "수집날짜" < NOW() - INTERVAL '6 months';
-        ```
-        
-        ### **3단계: 정기적 유지보수**
-        
-        - 월 1회 오래된 데이터 정리
-        - 쿼리 성능 모니터링
-        - 필요시 추가 인덱스 생성
-        """)
-    st.stop()
-
-# 충전기 선택
-selected_id = st.sidebar.selectbox("충전기 ID 선택", all_chargers, key="charger_select")
-
-# 데이터가 없는 경우
-if selected_id == "🔍 데이터가 없습니다...":
-    st.info("데이터베이스에 충전기 데이터가 없습니다.")
-    st.stop()
-
-# 초기 화면
-if selected_id == "🔍 충전기를 검색/선택하세요...":
-    st.info("👈 왼쪽에서 **충전기 ID**를 선택하면 상세 이력이 표시됩니다.")
+    # 오류 상태 확인
+    if "⚠️" in all_chargers[0]:
+        st.error("데이터를 불러올 수 없습니다. 위의 해결 가이드를 확인하세요.")
+        st.stop()
     
-    # 전체 통계 표시
-    with st.expander("📊 시스템 정보"):
-        st.write("**전체 충전기 수:**", len(all_chargers) - 1)
-        st.write("**연결 상태:**", connection_status)
-        st.write("**데이터 조회 제한:**", "충전기 목록 2000건, 상세 이력 200건")
+    # 검색 가능한 선택박스
+    selected_item = st.sidebar.selectbox(
+        "충전기/충전소/사이트 검색",
+        all_chargers,
+        key="item_select"
+    )
+    
+    if selected_item.startswith("🔍"):
+        st.info("👈 왼쪽에서 **충전기ID**, **충전소ID**, 또는 **사이트ID**를 검색하세요.")
+        
+        with st.expander("💡 검색 도움말"):
+            st.markdown("""
+            **검색 방법:**
+            - 선택박스에 ID나 충전소명의 일부를 입력하면 자동 필터링됩니다
+            - 형식: `충전기ID (충전소명) [충전소:XXX, 사이트:YYY]`
+            
+            **예시:**
+            - `1111057000004-02` 입력 → 해당 충전기 찾기
+            - `서울종로` 입력 → 충전소명으로 찾기
+            - `충전소:12345` 입력 → 충전소ID로 찾기
+            """)
+        st.stop()
+    else:
+        df, display_id = load_target_data(selected_item)
+
+elif search_mode == "충전소ID 직접 입력":
+    station_id = st.sidebar.text_input("충전소ID", placeholder="예: 12345")
+    
+    if st.sidebar.button("🔍 검색", key="search_station"):
+        if station_id:
+            with st.spinner(f"충전소ID '{station_id}' 검색 중..."):
+                df = search_by_id("충전소ID", station_id)
+            display_id = f"충전소ID: {station_id}"
+        else:
+            st.warning("충전소ID를 입력하세요.")
+            st.stop()
+    else:
+        st.info("👈 **충전소ID**를 입력하고 검색 버튼을 클릭하세요.")
+        st.stop()
+
+else:  # 사이트ID 직접 입력
+    site_id = st.sidebar.text_input("사이트ID", placeholder="예: 67890")
+    
+    if st.sidebar.button("🔍 검색", key="search_site"):
+        if site_id:
+            with st.spinner(f"사이트ID '{site_id}' 검색 중..."):
+                df = search_by_id("사이트ID", site_id)
+            display_id = f"사이트ID: {site_id}"
+        else:
+            st.warning("사이트ID를 입력하세요.")
+            st.stop()
+    else:
+        st.info("👈 **사이트ID**를 입력하고 검색 버튼을 클릭하세요.")
+        st.stop()
+
+# ---------------------------------------------------------
+# 데이터 표시
+# ---------------------------------------------------------
+
+if not df.empty:
+    # 상태 분류 추가
+    df['상태분류'] = df.apply(categorize_status, axis=1)
+    latest = df.iloc[-1]
+    
+    # 1. 헤더 정보
+    st.subheader(f"📍 {display_id}")
+    
+    # 기본 정보 표시
+    info_cols = st.columns(4)
+    with info_cols[0]:
+        if COL_CHARGER_ID in latest:
+            st.info(f"**충전기ID:** {latest[COL_CHARGER_ID]}")
+    with info_cols[1]:
+        if COL_STATION_NAME in latest and str(latest[COL_STATION_NAME]) not in ['nan', 'None', '']:
+            st.info(f"**충전소:** {latest[COL_STATION_NAME]}")
+    with info_cols[2]:
+        if COL_STATION_ID in latest and str(latest[COL_STATION_ID]) not in ['nan', 'None', '']:
+            st.info(f"**충전소ID:** {latest[COL_STATION_ID]}")
+    with info_cols[3]:
+        if COL_SITE_ID in latest and str(latest[COL_SITE_ID]) not in ['nan', 'None', '']:
+            st.info(f"**사이트ID:** {latest[COL_SITE_ID]}")
+    
+    # 2. 상태 메트릭
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("현재 상태", latest['상태분류'])
+    c2.metric("최종 수신", str(latest[COL_COLLECTED_AT])[:19])
+    c3.metric("에러 코드", latest.get(COL_ERROR_STATE, 'N/A'))
+    c4.metric("조회 기록", f"{len(df)}건")
+    
+    # 3. 상세 정보 (슬래시 문제 해결됨!)
+    with st.expander("🔧 충전기 상세 정보"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.write("**기본 스펙**")
+            st.write(f"- 제조사: {latest.get('제조사', 'N/A')}")
+            st.write(f"- 모델명: {latest.get('모델명', 'N/A')}")
+            st.write(f"- 충전기용량: {latest.get('충전기용량', 'N/A')}")
+            # ✅ 이제 슬래시 포함 컬럼도 정상 접근 가능!
+            st.write(f"- 급속/완속: {latest.get('급속/완속', 'N/A')}")
+        with col2:
+            st.write("**운영 정보**")
+            st.write(f"- 충전소 상태: {latest.get('충전소 상태', 'N/A')}")
+            st.write(f"- 신호세기: {latest.get('신호세기', 'N/A')}")
+            st.write(f"- 누적사용량: {latest.get('누적사용량', 'N/A')} kWh")
+            st.write(f"- 사용여부: {latest.get('사용여부', 'N/A')}")
+        with col3:
+            st.write("**위치 정보**")
+            st.write(f"- 주소: {latest.get('주소1', 'N/A')}")
+            st.write(f"- 상세주소: {latest.get('상세주소', 'N/A')}")
+            st.write(f"- 설치업체: {latest.get('설치업체', 'N/A')}")
+    
+    st.divider()
+
+    # 4. 다중 충전기 요약 (충전소/사이트 검색 시)
+    if search_mode in ["충전소ID 직접 입력", "사이트ID 직접 입력"]:
+        unique_chargers = df[COL_CHARGER_ID].nunique()
+        if unique_chargers > 1:
+            st.subheader(f"📋 충전기 목록 ({unique_chargers}대)")
+            
+            # 충전기별 최신 상태 요약
+            charger_summary = df.groupby(COL_CHARGER_ID).agg({
+                COL_COLLECTED_AT: 'max',
+                COL_STATUS: 'last',
+                COL_ERROR_STATE: 'last',
+                COL_STATION_NAME: 'first'
+            }).reset_index()
+            
+            charger_summary['상태분류'] = charger_summary.apply(categorize_status, axis=1)
+            
+            st.dataframe(
+                charger_summary.style.map(color_status, subset=['상태분류']),
+                use_container_width=True,
+                height=300
+            )
+            st.divider()
+
+    # 5. 타임라인 로그
+    st.subheader("🎛️ 시간대별 상태 변화")
+    
+    try:
+        df['날짜'] = pd.to_datetime(df[COL_COLLECTED_AT], errors='coerce').dt.tz_localize(None)
+        df_clean = df.dropna(subset=['날짜'])
+        
+        if len(df_clean) > 0:
+            # 최근 20개 데이터만 타임라인으로 표시
+            timeline_df = df_clean.tail(20)
+            
+            # 충전기ID별로 피벗 (다중 충전기 지원)
+            timeline = timeline_df.pivot_table(
+                index=COL_CHARGER_ID,
+                columns='날짜',
+                values='상태분류',
+                aggfunc='first'
+            )
+            timeline.columns = [c.strftime('%m-%d %H:%M') for c in timeline.columns]
+            
+            st.dataframe(
+                timeline.style.map(color_status),
+                use_container_width=True,
+                height=min(200, len(timeline) * 35 + 50)
+            )
+            
+            if len(df_clean) > 20:
+                st.caption(f"💡 최근 20건만 표시 중 (전체: {len(df_clean)}건)")
+        else:
+            st.warning("유효한 시간 데이터가 없습니다.")
+            
+    except Exception as e:
+        st.warning("타임라인 생성 중 오류가 발생했습니다.")
+        st.caption(f"오류: {str(e)}")
+    
+    st.divider()
+    
+    # 6. 상태별 통계
+    st.subheader("📊 상태 분포")
+    status_counts = df['상태분류'].value_counts()
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.bar_chart(status_counts)
+    
+    with col2:
+        for status, count in status_counts.items():
+            percentage = (count / len(df)) * 100
+            st.metric(status, f"{count}건", f"{percentage:.1f}%")
+    
+    st.divider()
+    
+    # 7. 전체 이력 데이터
+    st.subheader("📋 전체 이력 데이터")
+    
+    # 필터링 옵션
+    col1, col2 = st.columns(2)
+    with col1:
+        status_filter = st.multiselect(
+            "상태 필터",
+            options=df['상태분류'].unique().tolist(),
+            default=df['상태분류'].unique().tolist()
+        )
+    
+    with col2:
+        show_count = st.slider("표시 개수", 10, min(200, len(df)), min(50, len(df)), 10)
+    
+    # 필터 적용
+    filtered_df = df[df['상태분류'].isin(status_filter)]
+    
+    # 표시할 주요 컬럼 선택
+    display_columns = [
+        COL_CHARGER_ID, COL_COLLECTED_AT, '상태분류', COL_STATUS, 
+        COL_ERROR_STATE, '신호세기', '누적사용량', '급속/완속'
+    ]
+    display_columns = [col for col in display_columns if col in filtered_df.columns]
+    
+    display_df = filtered_df[display_columns].sort_values(COL_COLLECTED_AT, ascending=False).head(show_count)
+    
+    # 데이터프레임 표시
+    st.dataframe(
+        display_df.style.map(color_status, subset=['상태분류'] if '상태분류' in display_df.columns else []),
+        use_container_width=True,
+        height=400
+    )
+    
+    # CSV 다운로드
+    csv = filtered_df.to_csv(index=False).encode('utf-8-sig')
+    st.download_button(
+        label="📥 CSV 다운로드",
+        data=csv,
+        file_name=f"heartbeat_{display_id.replace(':', '_')}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv"
+    )
     
 else:
-    # 선택한 충전기의 데이터 로드
-    with st.spinner(f"'{selected_id}' 데이터 로딩 중..."):
-        df = load_target_data(selected_id)
-
-    if not df.empty:
-        # 상태 분류 추가
-        df['상태분류'] = df.apply(categorize_status, axis=1)
-        latest = df.iloc[-1]
-        
-        # 충전기ID 추출
-        if '(' in selected_id:
-            display_id = selected_id.split('(')[0].strip()
-        else:
-            display_id = selected_id
-        
-        # 1. 현재 상태 요약
-        st.subheader(f"📍 충전기 ID: {display_id}")
-        if COL_STATION_NAME in latest and str(latest[COL_STATION_NAME]) not in ['nan', 'None', '']:
-            st.caption(f"충전소: {latest[COL_STATION_NAME]}")
-        
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("현재 상태", latest['상태분류'])
-        c2.metric("최종 수신", str(latest[COL_COLLECTED_AT])[:19])
-        c3.metric("에러 코드", latest.get(COL_ERROR_STATE, 'N/A'))
-        c4.metric("조회 기록", f"{len(df)}건")
-        
-        # 추가 정보
-        with st.expander("🔧 충전기 상세 정보"):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("**기본 정보**")
-                st.write(f"- 제조사: {latest.get('제조사', 'N/A')}")
-                st.write(f"- 모델명: {latest.get('모델명', 'N/A')}")
-                st.write(f"- 충전기용량: {latest.get('충전기용량', 'N/A')}")
-                st.write(f"- 급속/완속: {latest.get('급속/완속', 'N/A')}")
-            with col2:
-                st.write("**운영 정보**")
-                st.write(f"- 충전소 상태: {latest.get('충전소 상태', 'N/A')}")
-                st.write(f"- 신호세기: {latest.get('신호세기', 'N/A')}")
-                st.write(f"- 누적사용량: {latest.get('누적사용량', 'N/A')} kWh")
-        
-        st.divider()
-
-        # 2. 타임라인 로그
-        st.subheader("🎛️ 시간대별 상태 변화")
-        
-        try:
-            df['날짜'] = pd.to_datetime(df[COL_COLLECTED_AT], errors='coerce').dt.tz_localize(None)
-            df = df.dropna(subset=['날짜'])
-            
-            if len(df) > 0:
-                # 최근 15개 데이터만 타임라인으로 표시
-                timeline_df = df.tail(15)
-                timeline = timeline_df.set_index(COL_CHARGER_ID).pivot(columns='날짜', values='상태분류')
-                timeline.columns = [c.strftime('%m-%d %H:%M') for c in timeline.columns]
-                
-                st.dataframe(
-                    timeline.style.map(color_status),
-                    use_container_width=True,
-                    height=150
-                )
-                
-                if len(df) > 15:
-                    st.caption(f"💡 최근 15건만 표시 중 (전체: {len(df)}건)")
-            else:
-                st.warning("유효한 시간 데이터가 없습니다.")
-                
-        except Exception as e:
-            st.warning("타임라인 생성 중 오류가 발생했습니다.")
-            st.caption(f"오류: {str(e)}")
-        
-        st.divider()
-        
-        # 3. 상태별 통계
-        st.subheader("📊 상태 분포")
-        status_counts = df['상태분류'].value_counts()
-        
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.bar_chart(status_counts)
-        
-        with col2:
-            for status, count in status_counts.items():
-                percentage = (count / len(df)) * 100
-                st.metric(status, f"{count}건", f"{percentage:.1f}%")
-        
-        st.divider()
-        
-        # 4. 전체 이력 데이터
-        st.subheader("📋 전체 이력 데이터")
-        
-        # 필터링 옵션
-        col1, col2 = st.columns(2)
-        with col1:
-            status_filter = st.multiselect(
-                "상태 필터",
-                options=df['상태분류'].unique().tolist(),
-                default=df['상태분류'].unique().tolist()
-            )
-        
-        with col2:
-            show_count = st.slider("표시 개수", 10, min(200, len(df)), min(50, len(df)), 10)
-        
-        # 필터 적용
-        filtered_df = df[df['상태분류'].isin(status_filter)]
-        
-        # 표시할 주요 컬럼 선택
-        display_columns = [COL_COLLECTED_AT, '상태분류', COL_STATUS, COL_ERROR_STATE, '신호세기', '누적사용량']
-        display_columns = [col for col in display_columns if col in filtered_df.columns]
-        
-        display_df = filtered_df[display_columns].sort_values(COL_COLLECTED_AT, ascending=False).head(show_count)
-        
-        # 데이터프레임 표시
-        st.dataframe(
-            display_df.style.map(color_status, subset=['상태분류'] if '상태분류' in display_df.columns else []),
-            use_container_width=True,
-            height=400
-        )
-        
-        # CSV 다운로드
-        csv = filtered_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(
-            label="📥 CSV 다운로드",
-            data=csv,
-            file_name=f"heartbeat_{display_id}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
-        )
-        
-    else:
-        st.warning(f"선택한 충전기 '{selected_id}'의 데이터가 없습니다.")
+    st.warning(f"'{display_id}'에 해당하는 데이터가 없습니다.")
 
 # 푸터
 st.sidebar.divider()
-st.sidebar.caption("💓 Project HEARTBEAT v1.3 (Performance Optimized)")
+st.sidebar.caption("💓 Project HEARTBEAT v1.5 (Special Character Fixed)")
 st.sidebar.caption(f"마지막 업데이트: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}")
