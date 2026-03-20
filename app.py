@@ -5,10 +5,18 @@ from supabase import create_client, Client
 # 1. 페이지 설정
 st.set_page_config(page_title="Project HEARTBEAT | Live", page_icon="💓", layout="wide")
 
-# 2. 접속 정보 (본인의 정보로 교체)
-SUPABASE_URL = "https://your-project-id.supabase.co"
-SUPABASE_KEY = "your-anon-key-here"
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# 2. 팀장님의 프로젝트 ID를 적용한 정확한 주소입니다.
+# 직접 입력 방식 (가장 빠른 확인용)
+SUPABASE_URL = "https://gkwtucqymzkvpurcpihk.supabase.co"
+
+# 슈파베이스 대시보드에서 복사한 'anon' 'public' 키를 여기에 정확히 붙여넣으세요.
+SUPABASE_KEY = " 여기에_복사한_long_anon_key_입력 " 
+
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    st.error(f"⚠️ 연결 설정 오류: {e}")
+    st.stop()
 
 # 3. 데이터 로딩 함수 (status_history 테이블만 사용)
 @st.cache_data(ttl=600)
