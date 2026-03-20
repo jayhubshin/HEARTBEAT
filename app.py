@@ -3,59 +3,37 @@ import pandas as pd
 from supabase import create_client, Client
 
 # 1. 페이지 설정
-st.set_page_config(
-    page_title="Project HEARTBEAT | 에버온",
-    page_icon="💓",
-    layout="wide"
-)
+st.set_page_config(page_title="Project HEARTBEAT | Live", page_icon="💓", layout="wide")
 
-# 2. 슈파베이스 접속 정보 설정
-# (슈파베이스 대시보드 -> Settings -> API에서 확인한 주소와 키를 입력하세요)
-SUPABASE_URL = "https://gkwtucqymzkvpurcpihk.supabase.co"
-SUPABASE_KEY = "sb_publishable_wFCWF2ARMVWV0gZ90vPYKQ_0vZh6sRR"
+# 2. 접속 정보 (본인의 정보로 교체)
+SUPABASE_URL = "https://your-project-id.supabase.co"
+SUPABASE_KEY = "your-anon-key-here"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 3. 데이터 로딩 함수 (슈파베이스 전용)
+# 3. 데이터 로딩 함수 (status_history 테이블만 사용)
 @st.cache_data(ttl=600)
 def get_station_list():
-    # charger_master 테이블에서 중복 없는 충전소 목록 가져오기
-    response = supabase.table("charger_master").select("station_name, address1").execute()
+    # 이력 데이터에서 중복 없는 충전기 ID 목록을 가져옵니다.
+    # 만약 status_history에 station_name 컬럼이 없다면 charger_id로 표시됩니다.
+    response = supabase.table("status_history").select("charger_id").execute()
     df = pd.DataFrame(response.data)
     if df.empty:
         return ["🔍 데이터가 없습니다..."]
     
-    df['display_name'] = df['station_name'] + " [" + df['address1'].fillna('') + "]"
-    return ["🔍 충전소를 검색/선택하세요..."] + sorted(df['display_name'].unique().tolist())
+    return ["🔍 충전기를 검색/선택하세요..."] + sorted(df['charger_id'].unique().tolist())
 
 @st.cache_data(ttl=300)
-def load_current_status(target_address):
-    # 특정 주소의 충전기들의 가장 최신 상태 가져오기
-    # 슈파베이스 쿼리: charger_master와 status_history를 조인하여 가져옴
+def load_target_data(target_id):
+    # 선택한 충전기 ID의 모든 이력을 가져옵니다.
     response = supabase.table("status_history") \
-        .select("charger_id, status, error_state, collected_at, charger_master!inner(station_name, address1)") \
-        .eq("charger_master.address1", target_address) \
-        .order("collected_at", desc=True) \
-        .execute()
-    
-    df = pd.DataFrame(response.data)
-    if not df.empty:
-        # 각 충전기별로 가장 최근 1건만 남김
-        df = df.sort_values('collected_at', ascending=False).drop_duplicates('charger_id')
-    return df
-
-@st.cache_data(ttl=600)
-def load_history_log(target_address):
-    # 타임라인용 이력 데이터 가져오기
-    response = supabase.table("status_history") \
-        .select("charger_id, status, error_state, collected_at, charger_master!inner(address1)") \
-        .eq("charger_master.address1", target_address) \
+        .eq("charger_id", target_id) \
         .order("collected_at", desc=False) \
         .execute()
     return pd.DataFrame(response.data)
 
 def categorize_status(row):
-    status = str(row['status'])
-    error = str(row['error_state'])
+    status = str(row.get('status', ''))
+    error = str(row.get('error_state', ''))
     if '미수신' in status or '통신' in status: return '⚫ 미수신'
     elif (error and error != '이상없음') or status in ['고장', '점검중']: return '🔴 점검중'
     elif '충전중' in status or '충전완료' in status: return '🔵 충전중'
@@ -72,64 +50,43 @@ def color_status(val):
     return colors.get(val, 'color: gray;')
 
 # ---------------------------------------------------------
-# UI 메인 레이아웃
 st.title("💓 Project HEARTBEAT")
-st.caption("에버온 충전 네트워크 관제 시스템 (Supabase Cloud 연결됨)")
+st.caption("충전기 실시간 이력 관제 (Single Table Mode)")
 
 # 사이드바
-st.sidebar.header("📡 관제 타겟 설정")
-all_stations = get_station_list()
-selected_option = st.sidebar.selectbox("충전소 검색/선택", all_stations)
+st.sidebar.header("📡 관제 타겟")
+all_chargers = get_station_list()
+selected_id = st.sidebar.selectbox("충전기 ID 선택", all_chargers)
 
-time_view = st.sidebar.radio("로그 간격", ['3시간별 (최근 72시간)', '일간 (최근 14일)', '주간 (최근 12주)'])
-
-if selected_option == "🔍 충전소를 검색/선택하세요...":
-    st.info("👈 왼쪽 메뉴에서 관제할 충전소를 선택해 주세요.")
+if selected_id == "🔍 충전기를 검색/선택하세요...":
+    st.info("👈 왼쪽에서 **충전기 ID**를 선택하면 상세 이력이 표시됩니다.")
 else:
-    target_address = selected_option.split(" [")[-1].replace("]", "")
-    
-    # 데이터 로드
-    current_df = load_current_status(target_address)
+    df = load_target_data(selected_id)
 
-    if not current_df.empty:
-        current_df['상태분류'] = current_df.apply(categorize_status, axis=1)
+    if not df.empty:
+        df['상태분류'] = df.apply(categorize_status, axis=1)
+        latest = df.iloc[-1] # 가장 최근 데이터
         
-        # 1. 요약 메트릭
-        st.markdown(f"#### 📍 {selected_option.split(' [')[0]}")
-        cols = st.columns(6)
-        states = ['🟢 충전대기', '🔵 충전중', '🔴 점검중', '⚫ 미수신', '⚪ 기타']
-        cols[0].metric("총 장비", f"{len(current_df):,}대")
-        for i, s in enumerate(states):
-            count = len(current_df[current_df['상태분류'] == s])
-            cols[i+1].metric(s, f"{count:,}대")
+        # 1. 현재 상태 요약
+        st.subheader(f"📍 충전기 ID: {selected_id}")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("현재 상태", latest['상태분류'])
+        c2.metric("최종 수신", str(latest['collected_at'])[:19])
+        c3.metric("에러 코드", latest.get('error_state', 'N/A'))
         
         st.divider()
 
-        # 2. 실시간 상세 상태
-        st.subheader("📋 실시간 상세 상태 (Live)")
-        display_df = current_df[['charger_id', 'status', 'error_state', 'collected_at']].copy()
-        display_df.columns = ['충전기 ID', '현재 상태', '에러 코드', '최종 수신 일시']
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
-
+        # 2. 타임라인 로그 (표 형식)
+        st.subheader("🎛️ 시간대별 상태 변화")
+        df['날짜'] = pd.to_datetime(df['collected_at']).dt.tz_localize(None)
+        
+        # 가로축을 시간으로 하는 타임라인 생성
+        timeline = df.set_index('charger_id').pivot(columns='날짜', values='상태분류')
+        # 시간 형식 가공
+        timeline.columns = [c.strftime('%m-%d %H:%M') for c in timeline.columns]
+        
+        st.dataframe(timeline.style.map(color_status), use_container_width=True)
+        
         st.divider()
-        
-        # 3. 타임라인 로그
-        st.subheader(f"🎛️ {time_view} 상태 변화 이력")
-        hist_df = load_history_log(target_address)
-        
-        if not hist_df.empty:
-            hist_df['상태그룹'] = hist_df.apply(categorize_status, axis=1)
-            hist_df['날짜'] = pd.to_datetime(hist_df['collected_at']).dt.tz_localize(None)
-            
-            pivot_df = hist_df.pivot_table(index='charger_id', columns='날짜', values='상태그룹', aggfunc='last')
-            
-            # 주기에 따른 샘플링
-            if '3시간별' in time_view: freq, fmt, limit = '3h', '%m-%d %H시', 24
-            elif '일간' in time_view: freq, fmt, limit = 'D', '%Y-%m-%d', 14
-            else: freq, fmt, limit = 'W-MON', '%Y-%m-%d(주)', 12
-                
-            resampled_df = pivot_df.T.resample(freq).last().ffill().T
-            resampled_df = resampled_df.fillna('⚪ 기타').iloc[:, -limit:]
-            resampled_df.columns = [col.strftime(fmt) for col in resampled_df.columns]
-            
-            st.dataframe(resampled_df.style.map(color_status), use_container_width=True, height=400)
+        st.subheader("📋 전체 이력 데이터")
+        st.write(df.sort_values('collected_at', ascending=False))
