@@ -17,13 +17,18 @@ try:
     test_response = supabase.table("status_history").select("charger_id").limit(1).execute()
     connection_status = "✅ 연결 성공"
 except APIError as e:
-    st.error(f"⚠️ API 오류: {e}")
+    st.error(f"⚠️ API 권한 오류: {e}")
     st.warning("""
     **RLS 정책 설정이 필요합니다:**
     
-    **방법 1**: Supabase 대시보드 → Authentication → Policies → status_history 테이블에 SELECT 정책 추가
+    Supabase 대시보드 → SQL Editor에서 다음을 실행하세요:
     
-    **방법 2**: SQL Editor에서 실행
+    ```sql
+    ALTER TABLE public.status_history DISABLE ROW LEVEL SECURITY;
+    ```
+    
+    또는 (보안이 중요한 경우):
+    
     ```sql
     CREATE POLICY "읽기 허용"
     ON public.status_history
@@ -37,10 +42,10 @@ except Exception as e:
     st.error(f"⚠️ 연결 오류: {e}")
     st.stop()
 
-# 4. 데이터 로딩 함수 (안정성 및 성능 개선)
+# 4. 데이터 로딩 함수 (안정성 개선)
 @st.cache_data(ttl=600)
 def get_station_list():
-    """충전기 ID 목록 조회 (성능 최적화)"""
+    """충전기 ID 목록 조회"""
     try:
         response = supabase.table("status_history").select("charger_id").limit(1000).execute()
         df = pd.DataFrame(response.data)
@@ -48,12 +53,12 @@ def get_station_list():
         if df.empty:
             return ["🔍 데이터가 없습니다..."]
         
-        # 중복 제거 및 정렬
         unique_chargers = sorted(df['charger_id'].unique().tolist())
         return ["🔍 충전기를 검색/선택하세요..."] + unique_chargers
         
     except APIError as e:
-        st.error(f"❌ 충전기 목록 조회 실패: {e}")
+        st.error(f"❌ 데이터 조회 실패: {e}")
+        st.info("💡 위의 RLS 정책 설정 가이드를 확인하세요.")
         return ["⚠️ 조회 실패"]
     except Exception as e:
         st.error(f"❌ 시스템 오류: {e}")
@@ -61,7 +66,7 @@ def get_station_list():
 
 @st.cache_data(ttl=300)
 def load_target_data(target_id):
-    """특정 충전기의 상세 이력 조회 (성능 최적화)"""
+    """특정 충전기의 상세 이력 조회"""
     try:
         response = supabase.table("status_history") \
             .select("*") \
@@ -80,13 +85,13 @@ def load_target_data(target_id):
         return pd.DataFrame()
 
 def categorize_status(row):
-    """상태 분류 함수 (개선된 조건 처리)"""
+    """상태 분류 함수"""
     status = str(row.get('status', ''))
     error = str(row.get('error_state', ''))
     
     if '미수신' in status or '통신' in status:
         return '⚫ 미수신'
-    elif (error and error not in ['이상없음', 'None', '', 'null', 'nan']) or status in ['고장', '점검중']:
+    elif (error and error not in ['이상없음', 'None', '', 'null']) or status in ['고장', '점검중']:
         return '🔴 점검중'
     elif '충전중' in status or '충전완료' in status:
         return '🔵 충전중'
@@ -123,26 +128,7 @@ all_chargers = get_station_list()
 # 오류 상태 확인
 error_states = ["⚠️ 조회 실패", "⚠️ 시스템 오류"]
 if any(state in all_chargers[0] for state in error_states):
-    st.error("데이터를 불러올 수 없습니다. 위의 오류 메시지를 확인하세요.")
-    
-    with st.expander("🔧 문제 해결 가이드"):
-        st.markdown("""
-        ### **RLS 정책 설정 방법**
-        
-        **방법 1: Supabase 대시보드**
-        1. Authentication → Policies 메뉴
-        2. status_history 테이블 찾기
-        3. "New Policy" → "Enable read access to everyone"
-        
-        **방법 2: SQL Editor에서 직접 실행**
-        ```sql
-        CREATE POLICY "읽기 허용"
-        ON public.status_history
-        FOR SELECT
-        TO anon, authenticated
-        USING (true);
-        ```
-        """)
+    st.error("데이터를 불러올 수 없습니다. 위의 오류 메시지와 해결 가이드를 확인하세요.")
     st.stop()
 
 # 충전기 선택
@@ -167,9 +153,8 @@ else:
     df = load_target_data(selected_id)
 
     if not df.empty:
-        # 상태 분류 추가
         df['상태분류'] = df.apply(categorize_status, axis=1)
-        latest = df.iloc[-1]  # 가장 최근 데이터
+        latest = df.iloc[-1]
         
         # 1. 현재 상태 요약
         st.subheader(f"📍 충전기 ID: {selected_id}")
@@ -186,29 +171,23 @@ else:
         st.subheader("🎛️ 시간대별 상태 변화")
         
         try:
-            # 날짜 변환 (오류 처리 강화)
             df['날짜'] = pd.to_datetime(df['collected_at'], errors='coerce').dt.tz_localize(None)
             df = df.dropna(subset=['날짜'])
             
             if len(df) > 0:
-                # 중복 데이터 처리 (같은 시간에 여러 로그가 있으면 마지막 것 사용)
-                df_unique = df.drop_duplicates(subset=['charger_id', '날짜'], keep='last')
-                
-                # 최근 30개 데이터만 타임라인으로 표시 (성능 최적화)
-                timeline_df = df_unique.tail(30)
-                
+                # 최근 20개 데이터만 타임라인으로 표시 (성능 최적화)
+                timeline_df = df.tail(20)
                 timeline = timeline_df.set_index('charger_id').pivot(columns='날짜', values='상태분류')
                 timeline.columns = [c.strftime('%m-%d %H:%M') for c in timeline.columns]
                 
-                # 스타일 적용하여 표시
                 st.dataframe(
                     timeline.style.map(color_status),
                     use_container_width=True,
                     height=150
                 )
                 
-                if len(df) > 30:
-                    st.caption(f"💡 최근 30건만 표시 중 (전체: {len(df)}건)")
+                if len(df) > 20:
+                    st.caption(f"💡 최근 20건만 표시 중 (전체: {len(df)}건)")
             else:
                 st.warning("유효한 시간 데이터가 없습니다.")
                 
@@ -217,56 +196,10 @@ else:
             st.caption(f"오류 상세: {str(e)}")
         
         st.divider()
-        
-        # 3. 상태별 통계 (추가 기능)
-        st.subheader("📊 상태 분포")
-        status_counts = df['상태분류'].value_counts()
-        
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.bar_chart(status_counts)
-        
-        with col2:
-            for status, count in status_counts.items():
-                percentage = (count / len(df)) * 100
-                st.metric(status, f"{count}건", f"{percentage:.1f}%")
-        
-        st.divider()
-        
-        # 4. 전체 이력 데이터 (필터링 기능 추가)
         st.subheader("📋 전체 이력 데이터")
-        
-        # 필터링 옵션
-        col1, col2 = st.columns(2)
-        with col1:
-            status_filter = st.multiselect(
-                "상태 필터",
-                options=df['상태분류'].unique().tolist(),
-                default=df['상태분류'].unique().tolist()
-            )
-        
-        with col2:
-            show_count = st.slider("표시 개수", 10, 500, 100, 10)
-        
-        # 필터 적용
-        filtered_df = df[df['상태분류'].isin(status_filter)]
-        display_df = filtered_df.sort_values('collected_at', ascending=False).head(show_count)
-        
-        # 데이터프레임 표시
         st.dataframe(
-            display_df.style.map(color_status, subset=['상태분류']),
-            use_container_width=True,
-            height=400
-        )
-        
-        # CSV 다운로드 기능
-        csv = filtered_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(
-            label="📥 CSV 다운로드",
-            data=csv,
-            file_name=f"heartbeat_{selected_id}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
+            df.sort_values('collected_at', ascending=False),
+            use_container_width=True
         )
         
     else:
