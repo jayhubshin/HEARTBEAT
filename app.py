@@ -10,7 +10,7 @@ st.set_page_config(page_title="Project HEARTBEAT | Live", page_icon="💓", layo
 SUPABASE_URL = "https://gkwtucqymzkvpurcpihk.supabase.co"
 
 # 슈파베이스 대시보드에서 복사한 'anon' 'public' 키를 여기에 정확히 붙여넣으세요.
-SUPABASE_KEY = "sb_publishable_wFCWF2ARMVWV0gZ90vPYKQ_0vZh6sRR" 
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdrd3R1Y3F5bXprdnB1cmNwaWhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MDIxNDcsImV4cCI6MjA4OTQ3ODE0N30.V0FnaZ-BaTEYUOKfzxvQ-T4Qk4E83LNIi4GflQsURUg" 
 
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
