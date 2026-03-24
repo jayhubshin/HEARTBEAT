@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 # 1. 페이지 설정
 st.set_page_config(page_title="Project HEARTBEAT | Live", page_icon="💓", layout="wide")
 
-# 2. Supabase 설정 (본인의 URL/KEY 그대로 사용)
+# 2. Supabase 설정
 SUPABASE_URL = "https://gkwtucqymzkvpurcpihk.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdrd3R1Y3F5bXprdnB1cmNwaWhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MDIxNDcsImV4cCI6MjA4OTQ3ODE0N30.V0FnaZ-BaTEYUOKfzxvQ-T4Qk4E83LNIi4GflQsURUg"
 
@@ -40,7 +40,7 @@ except Exception as e:
 
 @st.cache_data(ttl=300)
 def search_by_keyword(keyword: str):
-    """키워드로 charger_master 테이블에서 유연한 단어 검색 (충전소명, 사이트명, 주소)"""
+    """키워드로 charger_master 테이블에서 유연한 단어 검색"""
     try:
         tokens = [t.strip() for t in keyword.split() if t.strip()]
         if not tokens:
@@ -96,7 +96,7 @@ def search_by_keyword(keyword: str):
 
 
 def build_site_list(df: pd.DataFrame) -> pd.DataFrame:
-    """검색된 charger_master 데이터를 사이트 단위로 그룹핑"""
+    """검색된 데이터를 사이트 단위로 그룹핑"""
     if df.empty:
         return pd.DataFrame()
 
@@ -182,7 +182,6 @@ def load_site_history(site_id: str, station_id: str):
 # ============================================================
 
 def color_status(val):
-    """상태분류(진단결과)에 적용되는 컬러"""
     colors = {
         "🚨 임의OFF/방치(>7일)": "background-color: #8B0000; color: white; font-weight: bold;",
         "⚠️ 현장조치요망(2~7일)": "background-color: #FF8C00; color: white; font-weight: bold;",
@@ -196,7 +195,6 @@ def color_status(val):
     return colors.get(val, "color: gray;")
 
 def color_raw_status(val):
-    """원본 status(DB 데이터)에 적용되는 타임라인 전용 컬러"""
     val = str(val)
     if "미수신" in val or "통신" in val:
         return "background-color: #444444; color: white;"
@@ -212,7 +210,7 @@ def color_raw_status(val):
         return "background-color: #CCCCCC; color: black;"
 
 def render_site_dashboard(df: pd.DataFrame, site_label: str):
-    """사이트 전체 대시보드 렌더링"""
+    """선택된 사이트 대시보드 렌더링"""
     if df.empty or COL_COLLECTED_AT not in df.columns:
         st.warning(f"'{site_label}'에 해당하는 상태 이력 데이터가 없습니다.")
         return
@@ -246,7 +244,6 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
     df["상태분류"] = df.apply(diagnose_status, axis=1)
 
     # ── 사이트 헤더 ──
-    st.subheader(f"📍 {site_label}")
     latest = df.iloc[-1]
     info_cols = st.columns(4)
     info_cols[0].info(f"**충전소명:** {latest.get(COL_STATION_NAME, '')}")
@@ -281,52 +278,9 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
     st.dataframe(charger_table.style.map(color_status, subset=["상태분류"]), use_container_width=True)
     st.divider()
 
-    # ── 개별 충전기 상세 ──
-    st.subheader("🔎 개별 충전기 상세 이력")
-    charger_list = sorted(df[COL_CHARGER_ID].dropna().unique().tolist())
-    
-    def charger_label(cid):
-        match = latest_per_charger[latest_per_charger[COL_CHARGER_ID] == cid]
-        return f"{cid} — {match.iloc[0].get('상태분류', '')}" if not match.empty else cid
-
-    if charger_list:
-        selected_charger = st.selectbox("충전기 선택", charger_list, format_func=charger_label, key="charger_detail_select")
-        charger_df = df[df[COL_CHARGER_ID] == selected_charger].copy()
-        charger_latest = charger_df.iloc[-1]
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("현재 상태", latest_per_charger[latest_per_charger[COL_CHARGER_ID] == selected_charger]["상태분류"].values[0])
-        c2.metric("최종 수신", str(charger_latest.get(COL_COLLECTED_AT, ""))[:19])
-        c3.metric("에러 코드", str(charger_latest.get(COL_ERROR_STATE, "N/A")))
-        c4.metric("누적 사용량(usage)", str(charger_latest.get(COL_USAGE, "N/A")))
-
-        with st.expander("🔧 마스터 정보 (상세)"):
-            c_m1, c_m2 = st.columns(2)
-            c_m1.write(f"**모델명:** {charger_latest.get(COL_MODEL, 'N/A')}")
-            c_m1.write(f"**상세주소:** {charger_latest.get(COL_ADDR_DTL, 'N/A')}")
-            c_m2.write(f"**메모:** {charger_latest.get('memo', 'N/A')}")
-
-        # 개별 충전기 타임라인 (3시간 단위 묶음 - round 적용 & 원본 status 표시)
-        st.markdown("#### 🎛️ 시간대별 상태 변화 (3시간 기준)")
-        try:
-            cdf_clean = charger_df.dropna(subset=["날짜"]).copy()
-            if len(cdf_clean) > 0:
-                # dt.round("3H") 적용: 앞뒤 1시간 30분 오차를 흡수하여 빈 칸 방지
-                cdf_clean["시간대"] = cdf_clean["날짜"].dt.round("3H")
-                cdf_3h = cdf_clean.drop_duplicates(subset=["시간대"], keep="last")
-                
-                tail = cdf_3h.tail(20) # 최근 20개
-                
-                timeline = tail.set_index("시간대")[[COL_STATUS]].T
-                timeline.columns = [c.strftime("%m-%d %H:%M") for c in timeline.columns]
-                timeline.index = [selected_charger]
-                st.dataframe(timeline.style.map(color_raw_status), use_container_width=True)
-        except Exception as e:
-            st.caption(f"타임라인 오류: {e}")
-    st.divider()
-
-    # ── 사이트 전체 타임라인 (3시간 단위 묶음 - round 적용 & 원본 status 표시) ──
+    # ── (위로 올린) 사이트 전체 타임라인 ──
     st.subheader("🗺️ 사이트 전체 타임라인 (3시간 기준)")
+    st.markdown("전체 충전기의 흐름을 한눈에 파악하세요.")
     try:
         df_clean = df.dropna(subset=["날짜"]).copy()
         if len(df_clean) > 0:
@@ -344,19 +298,61 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
             st.dataframe(site_timeline.style.map(color_raw_status), use_container_width=True)
     except Exception as e:
         st.caption(f"사이트 타임라인 오류: {e}")
+    st.divider()
+
+    # ── 개별 충전기 상세 ──
+    st.subheader("🔎 개별 충전기 상세 이력")
+    charger_list = sorted(df[COL_CHARGER_ID].dropna().unique().tolist())
+    
+    def charger_label(cid):
+        match = latest_per_charger[latest_per_charger[COL_CHARGER_ID] == cid]
+        return f"{cid} — {match.iloc[0].get('상태분류', '')}" if not match.empty else cid
+
+    if charger_list:
+        selected_charger = st.selectbox("충전기 상세조회 선택", charger_list, format_func=charger_label, key="charger_detail_select")
+        charger_df = df[df[COL_CHARGER_ID] == selected_charger].copy()
+        charger_latest = charger_df.iloc[-1]
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("현재 상태", latest_per_charger[latest_per_charger[COL_CHARGER_ID] == selected_charger]["상태분류"].values[0])
+        c2.metric("최종 수신", str(charger_latest.get(COL_COLLECTED_AT, ""))[:19])
+        c3.metric("에러 코드", str(charger_latest.get(COL_ERROR_STATE, "N/A")))
+        c4.metric("누적 사용량(usage)", str(charger_latest.get(COL_USAGE, "N/A")))
+
+        with st.expander("🔧 마스터 정보 (상세)"):
+            c_m1, c_m2 = st.columns(2)
+            c_m1.write(f"**모델명:** {charger_latest.get(COL_MODEL, 'N/A')}")
+            c_m1.write(f"**상세주소:** {charger_latest.get(COL_ADDR_DTL, 'N/A')}")
+            c_m2.write(f"**메모:** {charger_latest.get('memo', 'N/A')}")
+
+        # 개별 충전기 타임라인
+        st.markdown("#### 🎛️ 선택된 충전기 상태 변화 (3시간 기준)")
+        try:
+            cdf_clean = charger_df.dropna(subset=["날짜"]).copy()
+            if len(cdf_clean) > 0:
+                cdf_clean["시간대"] = cdf_clean["날짜"].dt.round("3H")
+                cdf_3h = cdf_clean.drop_duplicates(subset=["시간대"], keep="last")
+                
+                tail = cdf_3h.tail(20) # 최근 20개
+                
+                timeline = tail.set_index("시간대")[[COL_STATUS]].T
+                timeline.columns = [c.strftime("%m-%d %H:%M") for c in timeline.columns]
+                timeline.index = [selected_charger]
+                st.dataframe(timeline.style.map(color_raw_status), use_container_width=True)
+        except Exception as e:
+            st.caption(f"타임라인 오류: {e}")
 
 
 # ============================================================
-# 메인 화면
+# 메인 화면 (오른쪽 프레임) 및 사이드바 (왼쪽 프레임) 레이아웃
 # ============================================================
-st.title("💓 Project HEARTBEAT")
-st.caption("충전기 실시간 이력 관제 — 키워드 다중 검색 → DB 연동 → 렌더링")
-
-st.sidebar.header("📡 관제 타겟")
+st.sidebar.title("💓 HEARTBEAT")
+st.sidebar.header("📡 관제 타겟 검색")
 st.sidebar.caption(connection_status)
 st.sidebar.markdown("---")
 st.sidebar.markdown("**충전소명, 주소, 사이트명** 등\n단어를 띄어쓰기로 조합하여 유연하게 검색하세요.")
 
+# 검색창은 사이드바 유지
 keyword = st.sidebar.text_input("🔍 검색어", placeholder="예: 서울 아파트, 노원 에버온 ...", key="main_keyword")
 search_clicked = st.sidebar.button("🔍 검색", key="search_btn", use_container_width=True)
 
@@ -377,8 +373,11 @@ if search_clicked and keyword.strip():
         else:
             st.session_state.site_list = pd.DataFrame()
 
+# ── 메인 화면 (오른쪽 프레임) ──
+st.title("📊 사이트 통합 관제 대시보드")
+
 if st.session_state.search_results is None:
-    st.info("👈 왼쪽에서 **충전소명**, **주소**, **사이트명** 등을 띄어쓰기로 조합하여 검색해 보세요.")
+    st.info("👈 왼쪽 사이드바에서 **충전소명**, **주소**, **사이트명** 등을 띄어쓰기로 조합하여 검색해 보세요.")
     st.stop()
 
 if st.session_state.search_results is not None and st.session_state.search_results.empty:
@@ -386,9 +385,11 @@ if st.session_state.search_results is not None and st.session_state.search_resul
     st.stop()
 
 site_list = st.session_state.site_list
-if site_list is not None and not site_list.empty:
-    st.sidebar.markdown(f"**검색 결과: {len(site_list)}곳**")
 
+# 검색 결과 리스트 및 사이트 선택창을 메인 화면 상단으로 이동
+if site_list is not None and not site_list.empty:
+    st.success(f"✅ 총 **{len(site_list)}**곳의 사이트가 검색되었습니다.")
+    
     result_options = []
     for _, row in site_list.iterrows():
         label = row["display_label"]
@@ -398,7 +399,15 @@ if site_list is not None and not site_list.empty:
         tag = f"사이트:{sid}" if sid else f"충전소:{stid}"
         result_options.append(f"{label}  ({count}대) [{tag}]")
 
-    selected_result_label = st.sidebar.selectbox("충전소(사이트) 선택", result_options, key="site_select")
+    # 선택 박스를 메인 화면 프레임에 큼지막하게 배치
+    selected_result_label = st.selectbox(
+        "📍 모니터링할 충전소(사이트)를 선택하세요", 
+        result_options, 
+        key="site_select"
+    )
+    
+    st.markdown("---")
+
     selected_idx = result_options.index(selected_result_label)
     selected_row = site_list.iloc[selected_idx]
 
@@ -409,6 +418,7 @@ if site_list is not None and not site_list.empty:
     with st.spinner(f"'{sel_display}' 상태 이력 연동 중..."):
         df = load_site_history(sel_site_id, sel_station_id)
 
+    # 대시보드 및 (위로 올라온) 타임라인 렌더링
     render_site_dashboard(df, sel_display)
 else:
     st.warning("검색 결과를 사이트별로 그룹핑할 수 없습니다.")
