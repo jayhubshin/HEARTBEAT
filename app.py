@@ -278,9 +278,12 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
     st.dataframe(charger_table.style.map(color_status, subset=["상태분류"]), use_container_width=True)
     st.divider()
 
-    # ── 사이트 전체 타임라인 ──
+    # ── 사이트 전체 타임라인 (클릭 이벤트 적용) ──
     st.subheader("🗺️ 사이트 전체 타임라인 (3시간 기준)")
-    st.markdown("전체 충전기의 흐름을 한눈에 파악하세요.")
+    st.markdown("👇 전체 충전기의 흐름입니다. **상세 이력을 확인할 충전기 행(Row)을 클릭**하세요.")
+    
+    selected_charger = None
+    
     try:
         df_clean = df.dropna(subset=["날짜"]).copy()
         if len(df_clean) > 0:
@@ -292,23 +295,30 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
             
             site_timeline = recent_df.pivot_table(index=COL_CHARGER_ID, columns="시간대", values=COL_STATUS, aggfunc="last")
             site_timeline.columns = [c.strftime("%m-%d %H:%M") for c in site_timeline.columns]
-            
             site_timeline = site_timeline.fillna("")
-            st.dataframe(site_timeline.style.map(color_raw_status), use_container_width=True)
+            
+            # [핵심] 타임라인 데이터프레임 클릭 활성화
+            timeline_event = st.dataframe(
+                site_timeline.style.map(color_raw_status), 
+                use_container_width=True,
+                on_select="rerun",           # 선택 시 화면 새로고침
+                selection_mode="single-row"  # 단일 행 선택
+            )
+            
+            # 클릭된 행의 인덱스를 통해 충전기 ID 추출
+            if timeline_event.selection.rows:
+                selected_idx = timeline_event.selection.rows[0]
+                selected_charger = site_timeline.index[selected_idx]
+            
     except Exception as e:
         st.caption(f"사이트 타임라인 오류: {e}")
     st.divider()
 
     # ── 개별 충전기 상세 ──
     st.subheader("🔎 개별 충전기 상세 이력")
-    charger_list = sorted(df[COL_CHARGER_ID].dropna().unique().tolist())
     
-    def charger_label(cid):
-        match = latest_per_charger[latest_per_charger[COL_CHARGER_ID] == cid]
-        return f"{cid} — {match.iloc[0].get('상태분류', '')}" if not match.empty else cid
-
-    if charger_list:
-        selected_charger = st.selectbox("충전기 상세조회 선택", charger_list, format_func=charger_label, key="charger_detail_select")
+    if selected_charger:
+        st.success(f"✅ 선택된 충전기: **{selected_charger}**")
         charger_df = df[df[COL_CHARGER_ID] == selected_charger].copy()
         charger_latest = charger_df.iloc[-1]
 
@@ -340,6 +350,9 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
                 st.dataframe(timeline.style.map(color_raw_status), use_container_width=True)
         except Exception as e:
             st.caption(f"타임라인 오류: {e}")
+    else:
+        # 아무 충전기도 클릭하지 않았을 때의 안내 문구
+        st.info("👆 위 타임라인 표에서 상세조회할 **충전기를 마우스로 클릭**해 주세요.")
 
 
 # ============================================================
@@ -400,7 +413,7 @@ if site_list is not None and not site_list.empty:
 
     st.markdown("#### 📋 검색된 사이트 목록 (👇 원하는 행을 마우스로 클릭하세요!)")
     
-    # [핵심 변경 사항] 표 클릭(Selection) 이벤트 활성화
+    # 표 클릭(Selection) 이벤트 활성화
     selection_event = st.dataframe(
         display_site_df, 
         use_container_width=True, 
@@ -413,7 +426,6 @@ if site_list is not None and not site_list.empty:
     selected_rows = selection_event.selection.rows
 
     if selected_rows:
-        # 클릭된 행의 인덱스를 가져와 원본 데이터에서 정보 추출
         selected_idx = selected_rows[0]
         selected_row = site_list.iloc[selected_idx]
 
@@ -428,7 +440,6 @@ if site_list is not None and not site_list.empty:
         st.markdown("---")
         render_site_dashboard(df, sel_display)
     else:
-        # 표를 클릭하기 전 초기 안내 문구
         st.info("👆 위 표에서 상세 이력을 확인할 충전소(사이트)를 마우스로 클릭해 주세요.")
 
 else:
