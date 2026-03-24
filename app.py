@@ -35,45 +35,61 @@ except Exception as e:
 
 
 # ============================================================
-# 데이터 로딩 및 병합 로직 (테이블 2개 분리 대응)
+# 데이터 검색 및 병합 로직
 # ============================================================
 
 @st.cache_data(ttl=300)
 def search_by_keyword(keyword: str):
-    """키워드로 charger_master 테이블에서 충전소/주소 검색"""
+    """키워드로 charger_master 테이블에서 유연한 단어 검색 (충전소명, 사이트명, 주소)"""
     try:
-        keyword = keyword.strip()
-        if not keyword:
+        # 1. 띄어쓰기 기준으로 단어 분리
+        tokens = [t.strip() for t in keyword.split() if t.strip()]
+        if not tokens:
             return pd.DataFrame()
 
-        pattern = f"%{keyword}%"
-        all_data = []
+        # 검색 대상 컬럼
+        search_cols = [COL_STATION_NAME, COL_ADDR, COL_ADDR_DTL, COL_SITE_ID, COL_STATION_ID]
 
-        # charger_master에서 검색할 타겟 컬럼
-        search_targets = [
-            COL_STATION_NAME, COL_ADDR, COL_CHARGER_ID,
-            COL_STATION_ID, COL_SITE_ID, COL_ADDR_DTL
-        ]
+        # 2. 가장 긴 단어를 서버 검색용 메인 키워드로 사용 (검색 Limit 방어)
+        primary_keyword = max(tokens, key=len)
+        pattern = f"%{primary_keyword}%"
 
-        for col in search_targets:
-            try:
-                response = (
-                    supabase.table("charger_master")
-                    .select("*")
-                    .ilike(col, pattern)
-                    .limit(500)
-                    .execute()
-                )
-                if response.data:
-                    all_data.extend(response.data)
-            except Exception:
-                continue
+        # Supabase 단일 or_ 쿼리 구성
+        or_query = (
+            f"{COL_STATION_NAME}.ilike.{pattern},"
+            f"{COL_ADDR}.ilike.{pattern},"
+            f"{COL_ADDR_DTL}.ilike.{pattern},"
+            f"{COL_SITE_ID}.ilike.{pattern},"
+            f"{COL_STATION_ID}.ilike.{pattern}"
+        )
 
-        if not all_data:
-            return pd.DataFrame()
+        response = (
+            supabase.table("charger_master")
+            .select("*")
+            .or_(or_query)
+            .limit(3000)
+            .execute()
+        )
 
-        df = pd.DataFrame(all_data)
-        # 중복 제거 (charger_id 기준)
+        df = pd.DataFrame(response.data)
+        if df.empty:
+            return df
+
+        # 3. Pandas에서 데이터 전처리 및 나머지 단어 다중 필터링 (AND 검색)
+        for col in search_cols:
+            if col in df.columns:
+                df[col] = df[col].astype(str).fillna("")
+
+        other_tokens = [t for t in tokens if t != primary_keyword]
+        for token in other_tokens:
+            mask = pd.Series(False, index=df.index)
+            # 각 단어가 지정된 컬럼 중 '하나라도' 포함되어 있으면 True
+            for col in search_cols:
+                if col in df.columns:
+                    mask |= df[col].str.contains(token, case=False, na=False)
+            df = df[mask] # 교집합(AND) 적용
+
+        # 충전기 중복 제거
         if COL_CHARGER_ID in df.columns:
             df = df.drop_duplicates(subset=[COL_CHARGER_ID], keep="first")
 
@@ -81,6 +97,9 @@ def search_by_keyword(keyword: str):
 
     except APIError as e:
         st.error(f"❌ 검색 실패: {e}")
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"❌ 시스템 오류: {e}")
         return pd.DataFrame()
 
 
@@ -144,18 +163,17 @@ def load_site_history(site_id: str, station_id: str):
         if df_master.empty:
             return pd.DataFrame()
 
-        # 충전기 ID 목록 추출
         charger_ids = df_master[COL_CHARGER_ID].dropna().unique().tolist()
         if not charger_ids:
             return pd.DataFrame()
 
-        # 2. 상태 이력 가져오기 (.in_ 필터 사용)
+        # 2. 상태 이력 가져오기
         history_res = (
             supabase.table("status_history")
             .select("*")
             .in_(COL_CHARGER_ID, charger_ids)
             .order(COL_COLLECTED_AT, desc=True)
-            .limit(2000) # 필요시 조정
+            .limit(2000)
             .execute()
         )
         
@@ -163,7 +181,6 @@ def load_site_history(site_id: str, station_id: str):
 
         # 3. 데이터 병합 (Merge)
         if df_history.empty:
-            # 이력이 없어도 마스터 정보라도 띄우기 위해 병합
             merged_df = df_master.copy()
         else:
             merged_df = pd.merge(df_history, df_master, on=COL_CHARGER_ID, how="left")
@@ -215,7 +232,7 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
             elif time_diff >= pd.Timedelta(days=2):
                 return "⚠️ 현장조치요망(2~7일)"
 
-        # 에러 상태나 고장 여부 확인 (0이 아니거나 None이 아니면 에러로 간주)
+        # 에러 상태나 고장 여부 확인
         if (error and error not in ["이상없음", "None", "", "null", "nan", "0"]) or "고장" in status or "점검" in status:
             return "🔴 점검중"
         elif "미수신" in status or "통신" in status:
@@ -323,14 +340,14 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
 # 메인 화면
 # ============================================================
 st.title("💓 Project HEARTBEAT")
-st.caption("충전기 실시간 이력 관제 — 키워드 검색 → DB Join (Master + History) → 렌더링")
+st.caption("충전기 실시간 이력 관제 — 키워드 다중 검색 → DB 연동 → 렌더링")
 
 st.sidebar.header("📡 관제 타겟")
 st.sidebar.caption(connection_status)
 st.sidebar.markdown("---")
-st.sidebar.markdown("**충전소명, 주소, 충전기ID** 등\n키워드를 입력하고 검색 버튼을 누르세요.")
+st.sidebar.markdown("**충전소명, 주소, 사이트명** 등\n단어를 띄어쓰기로 조합하여 유연하게 검색하세요.")
 
-keyword = st.sidebar.text_input("🔍 검색어", placeholder="예: 노원, 서울종로, 인왕산 ...", key="main_keyword")
+keyword = st.sidebar.text_input("🔍 검색어", placeholder="예: 서울 아파트, 노원 에버온 ...", key="main_keyword")
 search_clicked = st.sidebar.button("🔍 검색", key="search_btn", use_container_width=True)
 
 if "search_results" not in st.session_state:
@@ -339,21 +356,9 @@ if "search_results" not in st.session_state:
     st.session_state.last_keyword = ""
 
 if search_clicked and keyword.strip():
-    with st.spinner(f"'{keyword}' 마스터 데이터 검색 중..."):
-        tokens = keyword.strip().split()
-        primary_keyword = tokens[0]
-        # 1. 마스터 테이블에서 기본 검색
-        raw_results = search_by_keyword(primary_keyword)
-
-        # 2. 다중 키워드(띄어쓰기) Python 필터링
-        if not raw_results.empty and len(tokens) > 1:
-            for token in tokens[1:]:
-                mask = pd.Series([False] * len(raw_results), index=raw_results.index)
-                for col in raw_results.columns:
-                    if raw_results[col].dtype == object:
-                        mask = mask | raw_results[col].astype(str).str.contains(token, case=False, na=False)
-                raw_results = raw_results[mask]
-
+    with st.spinner(f"'{keyword}' 검색 중..."):
+        raw_results = search_by_keyword(keyword)
+        
         st.session_state.search_results = raw_results
         st.session_state.last_keyword = keyword
 
@@ -363,7 +368,7 @@ if search_clicked and keyword.strip():
             st.session_state.site_list = pd.DataFrame()
 
 if st.session_state.search_results is None:
-    st.info("👈 왼쪽에서 **충전소명**, **주소**, **충전기ID** 등을 검색하세요.")
+    st.info("👈 왼쪽에서 **충전소명**, **주소**, **사이트명** 등을 띄어쓰기로 조합하여 검색해 보세요.")
     st.stop()
 
 if st.session_state.search_results is not None and st.session_state.search_results.empty:
@@ -392,7 +397,6 @@ if site_list is not None and not site_list.empty:
     sel_display = selected_row["display_label"]
 
     with st.spinner(f"'{sel_display}' 상태 이력 연동 중..."):
-        # 여기서 charger_master 와 status_history 가 병합된 최종 df가 생성됨
         df = load_site_history(sel_site_id, sel_station_id)
 
     render_site_dashboard(df, sel_display)
