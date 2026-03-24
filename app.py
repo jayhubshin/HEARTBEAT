@@ -35,8 +35,27 @@ except Exception as e:
 
 
 # ============================================================
-# 데이터 검색 및 병합 로직
+# 데이터 검색 및 기준 시간 조회 로직
 # ============================================================
+
+@st.cache_data(ttl=60)
+def get_db_last_update_time():
+    """DB(status_history) 전체에서 가장 최신 수집날짜를 조회하여 기준 시간으로 설정"""
+    try:
+        response = (
+            supabase.table("status_history")
+            .select(COL_COLLECTED_AT)
+            .order(COL_COLLECTED_AT, desc=True)
+            .limit(1)
+            .execute()
+        )
+        if response.data:
+            return pd.to_datetime(response.data[0][COL_COLLECTED_AT]).tz_localize(None)
+    except Exception:
+        pass
+    # DB 조회가 실패하거나 데이터가 아예 없을 경우에만 서버 현재 시간 사용
+    return pd.Timestamp.now().tz_localize(None)
+
 
 @st.cache_data(ttl=300)
 def search_by_keyword(keyword: str):
@@ -209,6 +228,7 @@ def color_raw_status(val):
     else:
         return "background-color: #CCCCCC; color: black;"
 
+
 def render_site_dashboard(df: pd.DataFrame, site_label: str):
     """선택된 사이트 대시보드 렌더링"""
     if df.empty or COL_COLLECTED_AT not in df.columns:
@@ -216,7 +236,9 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
         return
 
     df["날짜"] = pd.to_datetime(df[COL_COLLECTED_AT], errors="coerce").dt.tz_localize(None)
-    now = pd.Timestamp.now().tz_localize(None)
+    
+    # [핵심 로직 변경] DB의 가장 최신 시간 불러오기
+    db_last_time = get_db_last_update_time()
 
     def diagnose_status(row):
         status = str(row.get(COL_STATUS, ""))
@@ -224,7 +246,8 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
         dt = row["날짜"]
         
         if pd.notna(dt):
-            time_diff = now - dt
+            # 현재 시간이 아닌 DB 마지막 업데이트 기준 시간과 차이 계산
+            time_diff = db_last_time - dt 
             if time_diff > pd.Timedelta(days=7):
                 return "🚨 임의OFF/방치(>7일)"
             elif time_diff >= pd.Timedelta(days=2):
@@ -351,7 +374,6 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
         except Exception as e:
             st.caption(f"타임라인 오류: {e}")
     else:
-        # 아무 충전기도 클릭하지 않았을 때의 안내 문구
         st.info("👆 위 타임라인 표에서 상세조회할 **충전기를 마우스로 클릭**해 주세요.")
 
 
@@ -361,6 +383,10 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
 st.sidebar.title("💓 HEARTBEAT")
 st.sidebar.header("📡 관제 타겟 검색")
 st.sidebar.caption(connection_status)
+
+# DB 마지막 업데이트 시간 표시
+global_db_last_time = get_db_last_update_time()
+st.sidebar.caption(f"🕒 DB 최종 수신: {global_db_last_time.strftime('%Y-%m-%d %H:%M')}")
 st.sidebar.markdown("---")
 st.sidebar.markdown("**충전소명, 주소, 사이트명** 등\n단어를 띄어쓰기로 조합하여 유연하게 검색하세요.")
 
