@@ -385,7 +385,7 @@ if st.session_state.search_results is not None and st.session_state.search_resul
 
 site_list = st.session_state.site_list
 
-# 검색 결과 표(Table)를 메인 화면 상단에 출력
+# 검색 결과 표(Table)를 메인 화면 상단에 출력하고 클릭 이벤트 감지
 if site_list is not None and not site_list.empty:
     st.success(f"✅ 총 **{len(site_list)}**곳의 사이트가 검색되었습니다.")
     
@@ -398,39 +398,38 @@ if site_list is not None and not site_list.empty:
         COL_STATION_ID: "충전소ID"
     })[["충전소명", "주소", "충전기 대수", "사이트ID", "충전소ID"]]
 
-    st.markdown("#### 📋 검색된 사이트 목록")
-    # 검색 결과를 표로 표시
-    st.dataframe(display_site_df, use_container_width=True, hide_index=True)
-
-    # 표 아래에서 사이트 선택
-    result_options = []
-    for _, row in site_list.iterrows():
-        label = row["display_label"]
-        count = row["charger_count"]
-        sid = row.get(COL_SITE_ID, "")
-        stid = row.get(COL_STATION_ID, "")
-        tag = f"사이트:{sid}" if sid else f"충전소:{stid}"
-        result_options.append(f"{label} ({count}대) [{tag}]")
-
-    st.markdown("---")
-    selected_result_label = st.selectbox(
-        "📍 위 표에서 모니터링할 충전소(사이트)를 선택하세요", 
-        result_options, 
-        key="site_select"
+    st.markdown("#### 📋 검색된 사이트 목록 (👇 원하는 행을 마우스로 클릭하세요!)")
+    
+    # [핵심 변경 사항] 표 클릭(Selection) 이벤트 활성화
+    selection_event = st.dataframe(
+        display_site_df, 
+        use_container_width=True, 
+        hide_index=True,
+        on_select="rerun",           # 클릭 시 화면 즉시 갱신
+        selection_mode="single-row"  # 단일 행 선택 모드
     )
 
-    selected_idx = result_options.index(selected_result_label)
-    selected_row = site_list.iloc[selected_idx]
+    # 사용자가 표에서 특정 행을 클릭했는지 확인
+    selected_rows = selection_event.selection.rows
 
-    sel_site_id = selected_row.get(COL_SITE_ID, "")
-    sel_station_id = selected_row.get(COL_STATION_ID, "")
-    sel_display = selected_row["display_label"]
+    if selected_rows:
+        # 클릭된 행의 인덱스를 가져와 원본 데이터에서 정보 추출
+        selected_idx = selected_rows[0]
+        selected_row = site_list.iloc[selected_idx]
 
-    with st.spinner(f"'{sel_display}' 상태 이력 연동 중..."):
-        df = load_site_history(sel_site_id, sel_station_id)
+        sel_site_id = selected_row.get(COL_SITE_ID, "")
+        sel_station_id = selected_row.get(COL_STATION_ID, "")
+        sel_display = selected_row["display_label"]
 
-    # 대시보드 렌더링
-    st.markdown("---")
-    render_site_dashboard(df, sel_display)
+        with st.spinner(f"'{sel_display}' 상태 이력 연동 중..."):
+            df = load_site_history(sel_site_id, sel_station_id)
+
+        # 표 아래쪽에 대시보드 렌더링
+        st.markdown("---")
+        render_site_dashboard(df, sel_display)
+    else:
+        # 표를 클릭하기 전 초기 안내 문구
+        st.info("👆 위 표에서 상세 이력을 확인할 충전소(사이트)를 마우스로 클릭해 주세요.")
+
 else:
     st.warning("검색 결과를 사이트별로 그룹핑할 수 없습니다.")
