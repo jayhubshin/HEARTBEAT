@@ -278,13 +278,12 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
     st.dataframe(charger_table.style.map(color_status, subset=["상태분류"]), use_container_width=True)
     st.divider()
 
-    # ── (위로 올린) 사이트 전체 타임라인 ──
+    # ── 사이트 전체 타임라인 ──
     st.subheader("🗺️ 사이트 전체 타임라인 (3시간 기준)")
     st.markdown("전체 충전기의 흐름을 한눈에 파악하세요.")
     try:
         df_clean = df.dropna(subset=["날짜"]).copy()
         if len(df_clean) > 0:
-            # dt.round("3H") 적용: 앞뒤 1시간 30분 오차를 흡수하여 빈 칸 방지
             df_clean["시간대"] = df_clean["날짜"].dt.round("3H")
             df_3h = df_clean.drop_duplicates(subset=[COL_CHARGER_ID, "시간대"], keep="last")
             
@@ -386,10 +385,24 @@ if st.session_state.search_results is not None and st.session_state.search_resul
 
 site_list = st.session_state.site_list
 
-# 검색 결과 리스트 및 사이트 선택창을 메인 화면 상단으로 이동
+# 검색 결과 표(Table)를 메인 화면 상단에 출력
 if site_list is not None and not site_list.empty:
     st.success(f"✅ 총 **{len(site_list)}**곳의 사이트가 검색되었습니다.")
     
+    # 표(Dataframe) 구성을 위해 컬럼명 예쁘게 변경
+    display_site_df = site_list.rename(columns={
+        COL_STATION_NAME: "충전소명",
+        COL_ADDR: "주소",
+        "charger_count": "충전기 대수",
+        COL_SITE_ID: "사이트ID",
+        COL_STATION_ID: "충전소ID"
+    })[["충전소명", "주소", "충전기 대수", "사이트ID", "충전소ID"]]
+
+    st.markdown("#### 📋 검색된 사이트 목록")
+    # 검색 결과를 표로 표시
+    st.dataframe(display_site_df, use_container_width=True, hide_index=True)
+
+    # 표 아래에서 사이트 선택
     result_options = []
     for _, row in site_list.iterrows():
         label = row["display_label"]
@@ -397,16 +410,14 @@ if site_list is not None and not site_list.empty:
         sid = row.get(COL_SITE_ID, "")
         stid = row.get(COL_STATION_ID, "")
         tag = f"사이트:{sid}" if sid else f"충전소:{stid}"
-        result_options.append(f"{label}  ({count}대) [{tag}]")
+        result_options.append(f"{label} ({count}대) [{tag}]")
 
-    # 선택 박스를 메인 화면 프레임에 큼지막하게 배치
+    st.markdown("---")
     selected_result_label = st.selectbox(
-        "📍 모니터링할 충전소(사이트)를 선택하세요", 
+        "📍 위 표에서 모니터링할 충전소(사이트)를 선택하세요", 
         result_options, 
         key="site_select"
     )
-    
-    st.markdown("---")
 
     selected_idx = result_options.index(selected_result_label)
     selected_row = site_list.iloc[selected_idx]
@@ -418,7 +429,8 @@ if site_list is not None and not site_list.empty:
     with st.spinner(f"'{sel_display}' 상태 이력 연동 중..."):
         df = load_site_history(sel_site_id, sel_station_id)
 
-    # 대시보드 및 (위로 올라온) 타임라인 렌더링
+    # 대시보드 렌더링
+    st.markdown("---")
     render_site_dashboard(df, sel_display)
 else:
     st.warning("검색 결과를 사이트별로 그룹핑할 수 없습니다.")
