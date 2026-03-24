@@ -306,19 +306,17 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
             c_m1.write(f"**상세주소:** {charger_latest.get(COL_ADDR_DTL, 'N/A')}")
             c_m2.write(f"**메모:** {charger_latest.get('memo', 'N/A')}")
 
-        # 개별 충전기 타임라인 (3시간 단위 묶음 & 원본 status 표시)
+        # 개별 충전기 타임라인 (3시간 단위 묶음 - round 적용 & 원본 status 표시)
         st.markdown("#### 🎛️ 시간대별 상태 변화 (3시간 기준)")
         try:
             cdf_clean = charger_df.dropna(subset=["날짜"]).copy()
             if len(cdf_clean) > 0:
-                # 1. 3시간 단위로 시간대 통일 (.dt.floor 적용)
-                cdf_clean["시간대"] = cdf_clean["날짜"].dt.floor("3H")
-                # 2. 동일 시간대 내에서는 가장 마지막으로 수신된 데이터 기준
+                # dt.round("3H") 적용: 앞뒤 1시간 30분 오차를 흡수하여 빈 칸 방지
+                cdf_clean["시간대"] = cdf_clean["날짜"].dt.round("3H")
                 cdf_3h = cdf_clean.drop_duplicates(subset=["시간대"], keep="last")
                 
-                tail = cdf_3h.tail(20) # 최근 20개 (약 2.5일치)
+                tail = cdf_3h.tail(20) # 최근 20개
                 
-                # 3. 상태분류가 아닌 DB 원본 상태 'status' 표출
                 timeline = tail.set_index("시간대")[[COL_STATUS]].T
                 timeline.columns = [c.strftime("%m-%d %H:%M") for c in timeline.columns]
                 timeline.index = [selected_charger]
@@ -327,23 +325,21 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
             st.caption(f"타임라인 오류: {e}")
     st.divider()
 
-    # ── 사이트 전체 타임라인 (3시간 단위 묶음 & 원본 status 표시) ──
+    # ── 사이트 전체 타임라인 (3시간 단위 묶음 - round 적용 & 원본 status 표시) ──
     st.subheader("🗺️ 사이트 전체 타임라인 (3시간 기준)")
     try:
         df_clean = df.dropna(subset=["날짜"]).copy()
         if len(df_clean) > 0:
-            df_clean["시간대"] = df_clean["날짜"].dt.floor("3H")
-            # 충전기별 & 시간대별 중복 데이터 중 마지막 데이터 유지
+            # dt.round("3H") 적용: 앞뒤 1시간 30분 오차를 흡수하여 빈 칸 방지
+            df_clean["시간대"] = df_clean["날짜"].dt.round("3H")
             df_3h = df_clean.drop_duplicates(subset=[COL_CHARGER_ID, "시간대"], keep="last")
             
             recent_times = sorted(df_3h["시간대"].unique())[-20:]
             recent_df = df_3h[df_3h["시간대"].isin(recent_times)]
             
-            # 피벗 테이블 생성시 원본 상태 COL_STATUS 사용
             site_timeline = recent_df.pivot_table(index=COL_CHARGER_ID, columns="시간대", values=COL_STATUS, aggfunc="last")
             site_timeline.columns = [c.strftime("%m-%d %H:%M") for c in site_timeline.columns]
             
-            # 값이 없는 빈 칸은 비워두기
             site_timeline = site_timeline.fillna("")
             st.dataframe(site_timeline.style.map(color_raw_status), use_container_width=True)
     except Exception as e:
