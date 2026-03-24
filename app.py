@@ -42,19 +42,14 @@ except Exception as e:
 def search_by_keyword(keyword: str):
     """키워드로 charger_master 테이블에서 유연한 단어 검색 (충전소명, 사이트명, 주소)"""
     try:
-        # 1. 띄어쓰기 기준으로 단어 분리
         tokens = [t.strip() for t in keyword.split() if t.strip()]
         if not tokens:
             return pd.DataFrame()
 
-        # 검색 대상 컬럼
         search_cols = [COL_STATION_NAME, COL_ADDR, COL_ADDR_DTL, COL_SITE_ID, COL_STATION_ID]
-
-        # 2. 가장 긴 단어를 서버 검색용 메인 키워드로 사용 (검색 Limit 방어)
         primary_keyword = max(tokens, key=len)
         pattern = f"%{primary_keyword}%"
 
-        # Supabase 단일 or_ 쿼리 구성
         or_query = (
             f"{COL_STATION_NAME}.ilike.{pattern},"
             f"{COL_ADDR}.ilike.{pattern},"
@@ -75,7 +70,6 @@ def search_by_keyword(keyword: str):
         if df.empty:
             return df
 
-        # 3. Pandas에서 데이터 전처리 및 나머지 단어 다중 필터링 (AND 검색)
         for col in search_cols:
             if col in df.columns:
                 df[col] = df[col].astype(str).fillna("")
@@ -83,13 +77,11 @@ def search_by_keyword(keyword: str):
         other_tokens = [t for t in tokens if t != primary_keyword]
         for token in other_tokens:
             mask = pd.Series(False, index=df.index)
-            # 각 단어가 지정된 컬럼 중 '하나라도' 포함되어 있으면 True
             for col in search_cols:
                 if col in df.columns:
                     mask |= df[col].str.contains(token, case=False, na=False)
-            df = df[mask] # 교집합(AND) 적용
+            df = df[mask]
 
-        # 충전기 중복 제거
         if COL_CHARGER_ID in df.columns:
             df = df.drop_duplicates(subset=[COL_CHARGER_ID], keep="first")
 
@@ -109,7 +101,6 @@ def build_site_list(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     df["_group_key"] = df[COL_SITE_ID].astype(str)
-    # site_id가 없으면 station_id로 그룹핑
     df.loc[df["_group_key"].isin(["nan", "None", ""]), "_group_key"] = df.loc[
         df["_group_key"].isin(["nan", "None", ""]), COL_STATION_ID
     ].astype(str)
@@ -145,13 +136,8 @@ def build_site_list(df: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(ttl=300)
 def load_site_history(site_id: str, station_id: str):
-    """
-    1. charger_master에서 해당 사이트의 전체 충전기 정보 가져오기
-    2. status_history에서 해당 충전기들의 상태 이력 가져오기
-    3. 두 데이터 병합(Merge)하여 반환
-    """
+    """마스터 정보와 상태 이력을 병합"""
     try:
-        # 1. 마스터 정보 가져오기
         if site_id:
             master_res = supabase.table("charger_master").select("*").eq(COL_SITE_ID, site_id).execute()
         elif station_id:
@@ -167,7 +153,6 @@ def load_site_history(site_id: str, station_id: str):
         if not charger_ids:
             return pd.DataFrame()
 
-        # 2. 상태 이력 가져오기
         history_res = (
             supabase.table("status_history")
             .select("*")
@@ -179,7 +164,6 @@ def load_site_history(site_id: str, station_id: str):
         
         df_history = pd.DataFrame(history_res.data)
 
-        # 3. 데이터 병합 (Merge)
         if df_history.empty:
             merged_df = df_master.copy()
         else:
@@ -198,6 +182,7 @@ def load_site_history(site_id: str, station_id: str):
 # ============================================================
 
 def color_status(val):
+    """상태분류(진단결과)에 적용되는 컬러"""
     colors = {
         "🚨 임의OFF/방치(>7일)": "background-color: #8B0000; color: white; font-weight: bold;",
         "⚠️ 현장조치요망(2~7일)": "background-color: #FF8C00; color: white; font-weight: bold;",
@@ -210,13 +195,28 @@ def color_status(val):
     }
     return colors.get(val, "color: gray;")
 
+def color_raw_status(val):
+    """원본 status(DB 데이터)에 적용되는 타임라인 전용 컬러"""
+    val = str(val)
+    if "미수신" in val or "통신" in val:
+        return "background-color: #444444; color: white;"
+    elif "고장" in val or "점검" in val or "에러" in val:
+        return "background-color: #EF553B; color: white;"
+    elif "충전중" in val or "충전완료" in val:
+        return "background-color: #1F77B4; color: white;"
+    elif "대기" in val or "정상" in val:
+        return "background-color: #00CC96; color: black;"
+    elif val in ["nan", "None", ""]:
+        return "background-color: transparent;"
+    else:
+        return "background-color: #CCCCCC; color: black;"
+
 def render_site_dashboard(df: pd.DataFrame, site_label: str):
     """사이트 전체 대시보드 렌더링"""
     if df.empty or COL_COLLECTED_AT not in df.columns:
         st.warning(f"'{site_label}'에 해당하는 상태 이력 데이터가 없습니다.")
         return
 
-    # 날짜 변환 및 시간 기반 필터링
     df["날짜"] = pd.to_datetime(df[COL_COLLECTED_AT], errors="coerce").dt.tz_localize(None)
     now = pd.Timestamp.now().tz_localize(None)
 
@@ -232,7 +232,6 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
             elif time_diff >= pd.Timedelta(days=2):
                 return "⚠️ 현장조치요망(2~7일)"
 
-        # 에러 상태나 고장 여부 확인
         if (error and error not in ["이상없음", "None", "", "null", "nan", "0"]) or "고장" in status or "점검" in status:
             return "🔴 점검중"
         elif "미수신" in status or "통신" in status:
@@ -262,7 +261,6 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
 
     latest_per_charger = df.drop_duplicates(subset=[COL_CHARGER_ID], keep="last").copy()
 
-    # 최근 이력을 분석하여 연속 5회 '충전대기'인 경우 이상신호로 변경
     for cid in latest_per_charger[COL_CHARGER_ID]:
         charger_history = df[df[COL_CHARGER_ID] == cid].tail(5)
         if len(charger_history) >= 5 and all(charger_history["상태분류"] == "🟢 충전대기"):
@@ -308,30 +306,46 @@ def render_site_dashboard(df: pd.DataFrame, site_label: str):
             c_m1.write(f"**상세주소:** {charger_latest.get(COL_ADDR_DTL, 'N/A')}")
             c_m2.write(f"**메모:** {charger_latest.get('memo', 'N/A')}")
 
-        # 개별 충전기 타임라인
-        st.markdown("#### 🎛️ 시간대별 상태 변화")
+        # 개별 충전기 타임라인 (3시간 단위 묶음 & 원본 status 표시)
+        st.markdown("#### 🎛️ 시간대별 상태 변화 (3시간 기준)")
         try:
-            cdf_clean = charger_df.dropna(subset=["날짜"])
+            cdf_clean = charger_df.dropna(subset=["날짜"]).copy()
             if len(cdf_clean) > 0:
-                tail = cdf_clean.tail(30)
-                timeline = tail.set_index("날짜")[["상태분류"]].T
+                # 1. 3시간 단위로 시간대 통일 (.dt.floor 적용)
+                cdf_clean["시간대"] = cdf_clean["날짜"].dt.floor("3H")
+                # 2. 동일 시간대 내에서는 가장 마지막으로 수신된 데이터 기준
+                cdf_3h = cdf_clean.drop_duplicates(subset=["시간대"], keep="last")
+                
+                tail = cdf_3h.tail(20) # 최근 20개 (약 2.5일치)
+                
+                # 3. 상태분류가 아닌 DB 원본 상태 'status' 표출
+                timeline = tail.set_index("시간대")[[COL_STATUS]].T
                 timeline.columns = [c.strftime("%m-%d %H:%M") for c in timeline.columns]
                 timeline.index = [selected_charger]
-                st.dataframe(timeline.style.map(color_status), use_container_width=True)
+                st.dataframe(timeline.style.map(color_raw_status), use_container_width=True)
         except Exception as e:
             st.caption(f"타임라인 오류: {e}")
     st.divider()
 
-    # ── 사이트 전체 타임라인 ──
-    st.subheader("🗺️ 사이트 전체 타임라인")
+    # ── 사이트 전체 타임라인 (3시간 단위 묶음 & 원본 status 표시) ──
+    st.subheader("🗺️ 사이트 전체 타임라인 (3시간 기준)")
     try:
-        df_clean = df.dropna(subset=["날짜"])
+        df_clean = df.dropna(subset=["날짜"]).copy()
         if len(df_clean) > 0:
-            recent_times = sorted(df_clean["날짜"].unique())[-20:]
-            recent_df = df_clean[df_clean["날짜"].isin(recent_times)]
-            site_timeline = recent_df.pivot_table(index=COL_CHARGER_ID, columns="날짜", values="상태분류", aggfunc="first")
+            df_clean["시간대"] = df_clean["날짜"].dt.floor("3H")
+            # 충전기별 & 시간대별 중복 데이터 중 마지막 데이터 유지
+            df_3h = df_clean.drop_duplicates(subset=[COL_CHARGER_ID, "시간대"], keep="last")
+            
+            recent_times = sorted(df_3h["시간대"].unique())[-20:]
+            recent_df = df_3h[df_3h["시간대"].isin(recent_times)]
+            
+            # 피벗 테이블 생성시 원본 상태 COL_STATUS 사용
+            site_timeline = recent_df.pivot_table(index=COL_CHARGER_ID, columns="시간대", values=COL_STATUS, aggfunc="last")
             site_timeline.columns = [c.strftime("%m-%d %H:%M") for c in site_timeline.columns]
-            st.dataframe(site_timeline.style.map(color_status), use_container_width=True)
+            
+            # 값이 없는 빈 칸은 비워두기
+            site_timeline = site_timeline.fillna("")
+            st.dataframe(site_timeline.style.map(color_raw_status), use_container_width=True)
     except Exception as e:
         st.caption(f"사이트 타임라인 오류: {e}")
 
