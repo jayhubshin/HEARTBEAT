@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Project HEARTBEAT | Live</title>
     
-    <!-- 라이브러리 로드 (버전 고정으로 호환성 보장) -->
+    <!-- 라이브러리 로드 -->
     <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/dayjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/plugin/utc.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/plugin/timezone.js"></script>
@@ -56,6 +56,11 @@
             background: #1a1a2e; 
             color: #4a9eff; 
             border: 1px solid #4a9eff; 
+        }
+        .connection-warning {
+            background: #2e2e1a;
+            color: #ffd700;
+            border: 1px solid #ffd700;
         }
         .search-input {
             width: 100%;
@@ -109,26 +114,6 @@
             background: #2a2a2a; 
             border-color: #ff4b4b; 
         }
-        .site-name { 
-            font-size: 1.2rem; 
-            font-weight: bold; 
-            color: #fafafa; 
-            margin-bottom: 0.5rem; 
-        }
-        .site-address { 
-            color: #aaa; 
-            font-size: 0.9rem; 
-            margin-bottom: 0.5rem; 
-        }
-        .site-badge {
-            display: inline-block;
-            background: #ff4b4b;
-            color: white;
-            padding: 0.25rem 0.75rem;
-            border-radius: 12px;
-            font-size: 0.8rem;
-            font-weight: bold;
-        }
         .loading { 
             text-align: center; 
             padding: 2rem; 
@@ -138,7 +123,6 @@
 </head>
 <body>
     <div class="app-container">
-        <!-- 사이드바 -->
         <aside class="sidebar">
             <h1>💓 HEARTBEAT</h1>
             <h2 style="font-size: 1.2rem; margin-bottom: 1rem;">📡 관제 타겟 검색</h2>
@@ -158,7 +142,6 @@
             <div id="search-results" style="margin-top: 1.5rem;"></div>
         </aside>
 
-        <!-- 메인 콘텐츠 -->
         <main class="main-content">
             <h1 style="font-size: 2rem; margin-bottom: 1.5rem;">📊 사이트 통합 관제 대시보드</h1>
             <div id="dashboard-area">
@@ -171,19 +154,17 @@
 
     <script>
         // ============================================
-        // 전역 변수 및 중복 실행 방지 (핵심 해결책)
+        // 중복 실행 방지 및 안전한 초기화
         // ============================================
         (function() {
             'use strict';
             
-            // 이미 초기화되었는지 확인 (중복 실행 방지)
             if (window.HEARTBEAT_INITIALIZED) {
                 console.log('⚠️ 이미 초기화됨 - 중복 실행 방지');
                 return;
             }
             window.HEARTBEAT_INITIALIZED = true;
 
-            // 전역 상태 객체 (supabase 중복 선언 방지)
             const APP_STATE = {
                 supabaseClient: null,
                 dbLastTime: null,
@@ -191,7 +172,7 @@
             };
 
             // ============================================
-            // 초기화 함수
+            // 타임아웃 처리가 포함된 초기화 함수
             // ============================================
             async function initialize() {
                 const statusDiv = document.getElementById('connection-status');
@@ -215,7 +196,7 @@
                         dayjs.extend(window.dayjs_plugin_timezone);
                     }
                     
-                    // 3. Supabase 클라이언트 생성 (단 한 번만)
+                    // 3. Supabase 클라이언트 생성
                     statusDiv.textContent = "데이터베이스 연결 중...";
                     
                     const SUPABASE_URL = "https://gkwtucqymzkvpurcpihk.supabase.co";
@@ -224,17 +205,41 @@
                     APP_STATE.supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                     console.log('✅ Supabase 클라이언트 생성 완료');
                     
-                    // 4. 연결 테스트
-                    const { data, error } = await APP_STATE.supabaseClient
+                    // 4. 연결 테스트 (타임아웃 처리 포함)
+                    await testDatabaseConnection(statusDiv, dbTimeDiv);
+                    
+                } catch (error) {
+                    console.error('❌ 초기화 실패:', error);
+                    statusDiv.textContent = `❌ 초기화 실패: ${error.message}`;
+                    statusDiv.className = "connection-info connection-error";
+                }
+            }
+
+            // ============================================
+            // 스마트 데이터베이스 연결 테스트
+            // ============================================
+            async function testDatabaseConnection(statusDiv, dbTimeDiv) {
+                try {
+                    // 타임아웃 프로미스 (10초)
+                    const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('연결 시간 초과 (10초)')), 10000)
+                    );
+                    
+                    // 1차 시도: status_history에서 최신 시간 조회 (인덱스 있으면 빠름)
+                    console.log('1차 연결 테스트: status_history 최신 시간 조회');
+                    
+                    const heavyQueryPromise = APP_STATE.supabaseClient
                         .from('status_history')
                         .select('collected_at')
                         .order('collected_at', { ascending: false })
                         .limit(1);
                     
+                    const { data, error } = await Promise.race([heavyQueryPromise, timeoutPromise]);
+                    
                     if (error) throw error;
                     
-                    // 5. 성공 처리
-                    statusDiv.textContent = "✅ 연결 성공";
+                    // 성공: 인덱스가 잘 작동하고 있음
+                    statusDiv.textContent = "✅ 연결 성공 (최적화됨)";
                     statusDiv.className = "connection-info connection-success";
                     
                     if (data && data.length > 0) {
@@ -242,17 +247,43 @@
                         dbTimeDiv.textContent = `🕒 DB 최종 수신: ${APP_STATE.dbLastTime.format('YYYY-MM-DD HH:mm')}`;
                     }
                     
-                    console.log('✅ HEARTBEAT 초기화 완료');
+                    console.log('✅ HEARTBEAT 초기화 완료 (최적화 모드)');
                     
-                } catch (error) {
-                    console.error('❌ 초기화 실패:', error);
-                    statusDiv.textContent = `❌ 연결 실패: ${error.message}`;
-                    statusDiv.className = "connection-info connection-error";
+                } catch (firstError) {
+                    console.warn('1차 테스트 실패, 2차 테스트로 전환:', firstError.message);
+                    
+                    // 2차 시도: 가벼운 charger_master 테이블로 연결 확인
+                    try {
+                        const lightQueryPromise = APP_STATE.supabaseClient
+                            .from('charger_master')
+                            .select('charger_id')
+                            .limit(1);
+                        
+                        const timeoutPromise2 = new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error('2차 연결 시간 초과')), 5000)
+                        );
+                        
+                        const { data: lightData, error: lightError } = await Promise.race([lightQueryPromise, timeoutPromise2]);
+                        
+                        if (lightError) throw lightError;
+                        
+                        // 2차 성공: 기본 연결은 가능하지만 인덱스 최적화 필요
+                        statusDiv.textContent = "⚠️ 연결 성공 (DB 최적화 권장)";
+                        statusDiv.className = "connection-info connection-warning";
+                        
+                        const currentTime = new Date();
+                        dbTimeDiv.textContent = `🕒 연결 시간: ${currentTime.toLocaleString('ko-KR')} (DB 인덱스 최적화 필요)`;
+                        
+                        console.log('⚠️ HEARTBEAT 초기화 완료 (호환 모드)');
+                        
+                    } catch (secondError) {
+                        throw new Error(`데이터베이스 연결 실패: ${secondError.message}`);
+                    }
                 }
             }
 
             // ============================================
-            // 검색 함수
+            // 최적화된 검색 함수
             // ============================================
             async function performSearch() {
                 const keyword = document.getElementById('search-input').value.trim();
@@ -269,22 +300,27 @@
                     return;
                 }
                 
-                // 로딩 상태
                 searchBtn.disabled = true;
                 searchBtn.textContent = '검색 중...';
                 resultsDiv.innerHTML = '<div class="loading">🔄 검색 중...</div>';
                 
                 try {
-                    // 검색 실행
-                    const tokens = keyword.split(/\s+/).filter(t => t.length > 0);
-                    const primaryKeyword = tokens.reduce((a, b) => a.length >= b.length ? a : b);
-                    const pattern = `%${primaryKeyword}%`;
+                    // 검색 타임아웃 (15초)
+                    const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('검색 시간 초과 (15초)')), 15000)
+                    );
                     
-                    const { data, error } = await APP_STATE.supabaseClient
+                    // 검색 쿼리 최적화
+                    const tokens = keyword.split(/\s+/).filter(t => t.length > 0);
+                    const primaryKeyword = tokens[0]; // 첫 번째 키워드로 1차 필터링
+                    
+                    const queryPromise = APP_STATE.supabaseClient
                         .from('charger_master')
-                        .select('*')
-                        .or(`station_name.ilike.${pattern},address1.ilike.${pattern},site_id.ilike.${pattern},station_id.ilike.${pattern}`)
+                        .select('charger_id, station_name, address1, site_id, station_id')
+                        .or(`station_name.ilike.%${primaryKeyword}%,address1.ilike.%${primaryKeyword}%,site_id.ilike.%${primaryKeyword}%`)
                         .limit(100);
+                    
+                    const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
                     
                     if (error) throw error;
                     
@@ -293,16 +329,33 @@
                         return;
                     }
                     
-                    // 사이트별 그룹핑
-                    const siteGroups = groupBySite(data);
-                    APP_STATE.searchResults = siteGroups;
+                    // 클라이언트 사이드에서 추가 필터링 (다중 키워드)
+                    let filteredData = data;
+                    if (tokens.length > 1) {
+                        filteredData = data.filter(row => {
+                            const searchText = `${row.station_name || ''} ${row.address1 || ''}`.toLowerCase();
+                            return tokens.every(token => searchText.includes(token.toLowerCase()));
+                        });
+                    }
                     
-                    // 결과 렌더링
+                    // 사이트별 그룹핑 및 렌더링
+                    const siteGroups = groupBySite(filteredData);
+                    APP_STATE.searchResults = siteGroups;
                     renderSearchResults(siteGroups);
                     
                 } catch (error) {
                     console.error('검색 오류:', error);
-                    resultsDiv.innerHTML = `<div class="connection-info connection-error">검색 오류: ${error.message}</div>`;
+                    
+                    if (error.message.includes('시간 초과')) {
+                        resultsDiv.innerHTML = `
+                            <div class="connection-info connection-warning">
+                                ⚠️ 검색 시간 초과<br>
+                                <small>더 구체적인 검색어를 입력하거나 잠시 후 다시 시도하세요.</small>
+                            </div>
+                        `;
+                    } else {
+                        resultsDiv.innerHTML = `<div class="connection-info connection-error">검색 오류: ${error.message}</div>`;
+                    }
                 } finally {
                     searchBtn.disabled = false;
                     searchBtn.textContent = '🔍 검색';
@@ -348,11 +401,17 @@
                 siteGroups.forEach((group, index) => {
                     html += `
                         <div class="site-card" onclick="selectSite(${index})">
-                            <div class="site-name">${group.station_name || group.key}</div>
-                            <div class="site-address">📍 ${group.address || '-'}</div>
-                            <div style="margin-top: 0.5rem;">
+                            <div style="font-size: 1.1rem; font-weight: bold; color: #ff4b4b; margin-bottom: 0.5rem;">
+                                ${group.station_name || group.key}
+                            </div>
+                            <div style="color: #aaa; font-size: 0.9rem; margin-bottom: 0.5rem;">
+                                📍 ${group.address || '-'}
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
                                 <span style="font-size: 0.8rem; color: #888;">🆔 ${group.site_id || group.station_id}</span>
-                                <span class="site-badge" style="float: right;">${group.count}대</span>
+                                <span style="background: #ff4b4b; color: white; padding: 0.25rem 0.75rem; border-radius: 12px; font-size: 0.8rem; font-weight: bold;">
+                                    ${group.count}대
+                                </span>
                             </div>
                         </div>
                     `;
@@ -372,10 +431,16 @@
                 dashboardArea.innerHTML = `
                     <div style="background: #262730; padding: 2rem; border-radius: 8px; border: 1px solid #3a3a3a;">
                         <h2 style="color: #ff4b4b; margin-bottom: 1rem;">🏢 ${site.station_name || site.key}</h2>
-                        <p style="color: #aaa; margin-bottom: 0.5rem;">📍 주소: ${site.address || '-'}</p>
-                        <p style="color: #aaa; margin-bottom: 0.5rem;">🆔 사이트ID: ${site.site_id || '-'}</p>
-                        <p style="color: #aaa; margin-bottom: 1rem;">⚡ 충전기: ${site.count}대</p>
-                        <p style="color: #888; font-size: 0.9rem;">상세 대시보드 기능은 곧 추가될 예정입니다.</p>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                            <div><strong>주소:</strong> ${site.address || '-'}</div>
+                            <div><strong>충전기:</strong> ${site.count}대</div>
+                            <div><strong>사이트ID:</strong> ${site.site_id || '-'}</div>
+                            <div><strong>충전소ID:</strong> ${site.station_id || '-'}</div>
+                        </div>
+                        <div style="background: #1a1a1a; padding: 1rem; border-radius: 6px; color: #888; font-size: 0.9rem;">
+                            💡 상세 대시보드 기능은 곧 추가될 예정입니다.<br>
+                            현재는 검색 및 기본 정보 확인이 가능합니다.
+                        </div>
                     </div>
                 `;
             };
@@ -384,16 +449,13 @@
             // 이벤트 리스너 등록
             // ============================================
             document.addEventListener('DOMContentLoaded', function() {
-                // 초기화 실행
                 initialize();
                 
-                // 검색 버튼
                 const searchBtn = document.getElementById('search-btn');
                 if (searchBtn) {
                     searchBtn.addEventListener('click', performSearch);
                 }
                 
-                // 엔터키 검색
                 const searchInput = document.getElementById('search-input');
                 if (searchInput) {
                     searchInput.addEventListener('keypress', function(e) {
@@ -404,7 +466,7 @@
                 }
             });
 
-        })(); // 즉시 실행 함수 종료 - 네임스페이스 오염 방지
+        })();
     </script>
 </body>
 </html>
