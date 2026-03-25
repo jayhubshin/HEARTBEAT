@@ -9,6 +9,7 @@
     <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/dayjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/plugin/utc.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/plugin/timezone.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/plugin/isoWeek.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
     
     <style>
@@ -23,10 +24,7 @@
             overflow: hidden;
         }
         
-        .app-container {
-            display: flex;
-            height: 100vh;
-        }
+        .app-container { display: flex; height: 100vh; }
         
         /* 사이드바 스타일 */
         .sidebar {
@@ -39,17 +37,7 @@
             overflow-y: auto;
         }
         
-        .sidebar h1 {
-            font-size: 1.8rem;
-            color: #ff4b4b;
-            margin-bottom: 0.5rem;
-        }
-        
-        .sidebar h2 {
-            font-size: 1rem;
-            color: #aaa;
-            margin-bottom: 1rem;
-        }
+        .sidebar h1 { font-size: 1.8rem; color: #ff4b4b; margin-bottom: 0.5rem; }
         
         .connection-info {
             padding: 0.75rem;
@@ -63,7 +51,6 @@
         .connection-success { background: #1a2e1a; color: #00ff7f; border: 1px solid #00ff7f; }
         .connection-error { background: #2d1a1a; color: #ff6b6b; border: 1px solid #ff6b6b; }
         .connection-loading { background: #1a1a2e; color: #4a9eff; border: 1px solid #4a9eff; }
-        .connection-warning { background: #2e2e1a; color: #ffd700; border: 1px solid #ffd700; }
         
         .search-input {
             width: 100%;
@@ -94,45 +81,12 @@
         .search-btn:hover:not(:disabled) { background: #ff6b6b; }
         .search-btn:disabled { background: #555; cursor: not-allowed; }
         
-        .search-summary {
-            margin-top: 1.5rem;
-            padding: 0.8rem;
-            background: #1a2e1a;
-            border-radius: 6px;
-            border: 1px solid #00ff7f;
-            font-size: 0.85rem;
-        }
-        
         /* 메인 콘텐츠 */
-        .main-content {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-        
-        .content-header {
-            background: #1a1a1a;
-            padding: 1.5rem 2rem;
-            border-bottom: 1px solid #3a3a3a;
-        }
-        
-        .content-header h1 {
-            font-size: 1.8rem;
-            margin-bottom: 0.5rem;
-        }
-        
-        .breadcrumb {
-            font-size: 0.9rem;
-            color: #888;
-        }
-        
-        .content-body {
-            flex: 1;
-            overflow-y: auto;
-            padding: 2rem;
-            background: #1a1a1a;
-        }
+        .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .content-header { background: #1a1a1a; padding: 1.5rem 2rem; border-bottom: 1px solid #3a3a3a; }
+        .content-header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+        .breadcrumb { font-size: 0.9rem; color: #888; }
+        .content-body { flex: 1; overflow-y: auto; padding: 2rem; background: #1a1a1a; }
         
         /* 테이블 스타일 */
         .table-container {
@@ -144,69 +98,126 @@
             box-shadow: 0 2px 10px rgba(0,0,0,0.3);
         }
         
-        .table-container table {
-            width: 100%;
-            border-collapse: collapse;
-        }
+        .table-container table { width: 100%; border-collapse: collapse; }
+        .table-container thead { background: #1e1e1e; position: sticky; top: 0; z-index: 10; }
+        .table-container th { padding: 1rem; text-align: left; font-weight: 600; color: #aaa; border-bottom: 2px solid #3a3a3a; }
+        .table-container td { padding: 1rem; border-bottom: 1px solid #3a3a3a; color: #fafafa; }
+        .table-container tbody tr { cursor: pointer; transition: all 0.2s; }
+        .table-container tbody tr:hover { background: #2d3748; }
+        .table-container tbody tr.selected { background: #2d4a3e; border-left: 4px solid #00ff7f; }
         
-        .table-container thead {
-            background: #1e1e1e;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-        }
+        /* 상태 배지 */
+        .status-badge { display: inline-block; padding: 0.3rem 0.7rem; border-radius: 12px; font-size: 0.8rem; font-weight: 600; }
+        .status-charging { background: #007bff; color: white; }
+        .status-ready { background: #28a745; color: white; }
+        .status-maintenance { background: #dc3545; color: white; }
+        .status-offline { background: #6c757d; color: white; }
+        .status-warning { background: #ffc107; color: #333; }
+        .status-count { background: #333; color: white; }
         
-        .table-container th {
-            padding: 1rem;
-            text-align: left;
-            font-weight: 600;
-            color: #aaa;
+        /* 탭 스타일 */
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
             border-bottom: 2px solid #3a3a3a;
         }
         
-        .table-container tbody {
+        .tab {
+            padding: 0.75rem 1.5rem;
+            background: none;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+        
+        .tab:hover { color: #fafafa; }
+        .tab.active { color: #ff4b4b; border-bottom-color: #ff4b4b; }
+        
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        /* 히트맵 테이블 스타일 */
+        .heatmap-container {
             background: #262730;
+            border-radius: 8px;
+            border: 1px solid #3a3a3a;
+            overflow: auto;
+            max-height: 600px;
         }
         
-        .table-container td {
-            padding: 1rem;
-            border-bottom: 1px solid #3a3a3a;
-            color: #fafafa;
+        .heatmap-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 1px;
+            background: #1a1a1a;
         }
         
-        .table-container tbody tr {
+        .heatmap-table th {
+            background: #1e1e1e;
+            padding: 0.5rem;
+            text-align: center;
+            font-size: 0.8rem;
+            color: #aaa;
+            position: sticky;
+            top: 0;
+            z-index: 5;
+        }
+        
+        .heatmap-table th.charger-header {
+            text-align: left;
+            padding-left: 1rem;
+            min-width: 120px;
+            position: sticky;
+            left: 0;
+            z-index: 6;
+            background: #1e1e1e;
+        }
+        
+        .heatmap-table td.charger-label {
+            text-align: left;
+            padding: 0.5rem 1rem;
+            font-weight: 600;
+            background: #262730;
+            position: sticky;
+            left: 0;
+            z-index: 4;
+            font-family: monospace;
+            font-size: 0.85rem;
+            border-right: 2px solid #3a3a3a;
+        }
+        
+        .heatmap-cell {
+            width: 40px;
+            height: 35px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
             cursor: pointer;
             transition: all 0.2s;
+            position: relative;
+            margin: 1px;
         }
         
-        .table-container tbody tr:hover {
-            background: #2d3748;
+        .heatmap-cell:hover {
+            transform: scale(1.15);
+            z-index: 10;
+            box-shadow: 0 0 10px rgba(255,255,255,0.4);
+            border-radius: 4px;
         }
         
-        .table-container tbody tr.selected {
-            background: #2d4a3e;
-            border-left: 4px solid #00ff7f;
-        }
-        
-        /* 상태 배지 */
-        .status-badge {
-            display: inline-block;
-            padding: 0.3rem 0.7rem;
-            border-radius: 12px;
-            font-size: 0.8rem;
-            font-weight: 600;
-            text-align: center;
-        }
-        
-        .status-emergency { background: #8B0000; color: white; }
-        .status-warning { background: #FF8C00; color: white; }
-        .status-caution { background: #FFD700; color: #333; }
-        .status-offline { background: #6c757d; color: white; }
-        .status-maintenance { background: #dc3545; color: white; }
-        .status-charging { background: #007bff; color: white; }
-        .status-ready { background: #28a745; color: white; }
-        .status-other { background: #6c757d; color: white; }
-        .status-count { background: #333; color: white; }
+        /* 히트맵 색상 */
+        .cell-empty { background: #1a1a1a; color: #555; }
+        .cell-charging { background: linear-gradient(135deg, #007bff, #0056b3); color: white; }
+        .cell-ready { background: linear-gradient(135deg, #28a745, #1e7e34); color: white; }
+        .cell-maintenance { background: linear-gradient(135deg, #dc3545, #a71d2a); color: white; }
+        .cell-offline { background: linear-gradient(135deg, #6c757d, #495057); color: white; }
+        .cell-warning { background: linear-gradient(135deg, #ffc107, #e0a800); color: #333; }
         
         /* 상세 패널 */
         .detail-panel {
@@ -228,10 +239,7 @@
             border-bottom: 1px solid #3a3a3a;
         }
         
-        .detail-header h3 {
-            color: #ff4b4b;
-            font-size: 1.3rem;
-        }
+        .detail-header h3 { color: #ff4b4b; font-size: 1.3rem; }
         
         .close-btn {
             background: none;
@@ -244,10 +252,7 @@
             transition: all 0.2s;
         }
         
-        .close-btn:hover {
-            background: #3a3a3a;
-            color: #fff;
-        }
+        .close-btn:hover { background: #3a3a3a; color: #fff; }
         
         .site-info-grid {
             display: grid;
@@ -259,51 +264,58 @@
             border-radius: 6px;
         }
         
-        .site-info-item {
+        .site-info-item { display: flex; flex-direction: column; }
+        .site-info-label { font-size: 0.8rem; color: #aaa; margin-bottom: 0.25rem; }
+        .site-info-value { font-weight: 600; color: #fafafa; }
+        
+        /* 범례 */
+        .legend {
             display: flex;
-            flex-direction: column;
-        }
-        
-        .site-info-label {
-            font-size: 0.8rem;
-            color: #aaa;
-            margin-bottom: 0.25rem;
-        }
-        
-        .site-info-value {
-            font-weight: 600;
-            color: #fafafa;
-        }
-        
-        /* 로딩 및 빈 상태 */
-        .loading {
-            text-align: center;
-            padding: 3rem;
-            color: #aaa;
-            font-size: 1.1rem;
-        }
-        
-        .empty-state {
-            text-align: center;
-            padding: 4rem 2rem;
-            color: #888;
-        }
-        
-        .empty-state-icon {
-            font-size: 4rem;
+            gap: 1rem;
+            flex-wrap: wrap;
             margin-bottom: 1rem;
+            padding: 1rem;
+            background: #1e1e1e;
+            border-radius: 6px;
         }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.85rem;
+        }
+        
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+        }
+        
+        /* 툴팁 */
+        .tooltip {
+            position: absolute;
+            background: rgba(0,0,0,0.9);
+            color: white;
+            padding: 0.5rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            pointer-events: none;
+            z-index: 1000;
+            display: none;
+            white-space: nowrap;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+        }
+        
+        .loading { text-align: center; padding: 3rem; color: #aaa; font-size: 1.1rem; }
+        .empty-state { text-align: center; padding: 4rem 2rem; color: #888; }
+        .empty-state-icon { font-size: 4rem; margin-bottom: 1rem; }
         
         /* 반응형 */
         @media (max-width: 768px) {
-            .app-container {
-                flex-direction: column;
-            }
-            .sidebar {
-                width: 100%;
-                border-right: none;
-                border-bottom: 1px solid #3a3a3a;
-            }
+            .app-container { flex-direction: column; }
+            .sidebar { width: 100%; border-right: none; border-bottom: 1px solid #3a3a3a; }
+            .heatmap-cell { width: 30px; height: 30px; font-size: 0.6rem; }
         }
     </style>
 </head>
@@ -312,7 +324,7 @@
         <!-- 사이드바 -->
         <aside class="sidebar">
             <h1>💓 HEARTBEAT</h1>
-            <h2>📡 관제 타겟 검색</h2>
+            <h2 style="font-size: 1rem; color: #aaa; margin-bottom: 1rem;">📡 관제 타겟 검색</h2>
             
             <div id="connection-status" class="connection-info connection-loading">
                 연결 확인 중...
@@ -326,13 +338,14 @@
             <input type="text" id="search-input" class="search-input" placeholder="예: 서울 아파트, 노원 에버온...">
             <button id="search-btn" class="search-btn">🔍 검색</button>
             
-            <div id="search-summary" style="display: none;"></div>
+            <div id="search-summary" style="display: none; margin-top: 1rem; padding: 0.8rem; background: #1a2e1a; border-radius: 6px; border: 1px solid #00ff7f; font-size: 0.85rem;"></div>
             
             <div style="margin-top: 2rem; padding: 1rem; background: #1e1e1e; border-radius: 6px; font-size: 0.85rem; color: #aaa;">
                 <strong>💡 사용 방법</strong><br><br>
-                1. 검색어를 입력하고 검색 버튼을 클릭하세요<br>
-                2. 오른쪽 표에서 원하는 사이트를 클릭하세요<br>
-                3. 하단에서 충전기별 상태 이력을 확인하세요
+                1. 검색어를 입력하고 검색<br>
+                2. 표에서 사이트 클릭<br>
+                3. 주간/월간 탭으로 패턴 분석<br>
+                4. 히트맵 셀 클릭으로 상세 확인
             </div>
         </aside>
 
@@ -348,17 +361,16 @@
                     <div class="empty-state">
                         <div class="empty-state-icon">🔍</div>
                         <h3 style="margin-bottom: 0.5rem;">검색으로 시작하세요</h3>
-                        <p>왼쪽 사이드바에서 충전소명, 주소, 사이트명 등을 검색하여<br>실시간 충전기 상태를 확인할 수 있습니다.</p>
+                        <p>왼쪽 사이드바에서 충전소를 검색하여<br>충전기별 상태 패턴을 분석할 수 있습니다.</p>
                     </div>
                 </div>
             </div>
         </main>
     </div>
+    
+    <div id="tooltip" class="tooltip"></div>
 
     <script>
-        // ============================================
-        // 전역 상태 및 중복 실행 방지
-        // ============================================
         (function() {
             'use strict';
             
@@ -372,7 +384,8 @@
                 supabaseClient: null,
                 dbLastTime: null,
                 searchResults: [],
-                selectedSite: null
+                selectedSite: null,
+                historyData: []
             };
 
             // ============================================
@@ -389,9 +402,11 @@
                         throw new Error('라이브러리 로딩 실패');
                     }
                     
-                    if (window.dayjs_plugin_utc && window.dayjs_plugin_timezone) {
+                    // Day.js 플러그인 초기화
+                    if (window.dayjs_plugin_utc && window.dayjs_plugin_timezone && window.dayjs_plugin_isoWeek) {
                         dayjs.extend(window.dayjs_plugin_utc);
                         dayjs.extend(window.dayjs_plugin_timezone);
+                        dayjs.extend(window.dayjs_plugin_isoWeek);
                     }
                     
                     const SUPABASE_URL = "https://gkwtucqymzkvpurcpihk.supabase.co";
@@ -399,41 +414,19 @@
                     
                     APP_STATE.supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                     
-                    await testDatabaseConnection(statusDiv, dbTimeDiv);
-                    
-                } catch (error) {
-                    console.error('❌ 초기화 실패:', error);
-                    statusDiv.textContent = `❌ 초기화 실패: ${error.message}`;
-                    statusDiv.className = "connection-info connection-error";
-                }
-            }
-
-            async function testDatabaseConnection(statusDiv, dbTimeDiv) {
-                try {
-                    const timeoutPromise = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('연결 시간 초과')), 10000)
-                    );
-                    
-                    const queryPromise = APP_STATE.supabaseClient
-                        .from('charger_master')
-                        .select('charger_id')
-                        .limit(1);
-                    
-                    const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
-                    
-                    if (error) throw error;
-                    
                     statusDiv.textContent = "✅ 연결 성공";
                     statusDiv.className = "connection-info connection-success";
                     
                     const currentTime = dayjs();
-                    dbTimeDiv.textContent = `🕒 연결 시간: ${currentTime.format('YYYY-MM-DD HH:mm')}`;
+                    dbTimeDiv.textContent = `🕒 ${currentTime.format('YYYY-MM-DD HH:mm')}`;
                     APP_STATE.dbLastTime = currentTime;
                     
                     console.log('✅ HEARTBEAT 초기화 완료');
                     
                 } catch (error) {
-                    throw new Error(`데이터베이스 연결 실패: ${error.message}`);
+                    console.error('❌ 초기화 실패:', error);
+                    statusDiv.textContent = `❌ 초기화 실패`;
+                    statusDiv.className = "connection-info connection-error";
                 }
             }
 
@@ -463,20 +456,14 @@
                 searchSummary.style.display = 'none';
                 
                 try {
-                    const timeoutPromise = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('검색 시간 초과')), 15000)
-                    );
-                    
                     const tokens = keyword.split(/\s+/).filter(t => t.length > 0);
                     const primaryKeyword = tokens[0];
                     
-                    const queryPromise = APP_STATE.supabaseClient
+                    const { data, error } = await APP_STATE.supabaseClient
                         .from('charger_master')
                         .select('*')
                         .or(`station_name.ilike.%${primaryKeyword}%,address1.ilike.%${primaryKeyword}%,site_id.ilike.%${primaryKeyword}%,station_id.ilike.%${primaryKeyword}%`)
                         .limit(200);
-                    
-                    const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
                     
                     if (error) throw error;
                     
@@ -500,11 +487,9 @@
                         });
                     }
                     
-                    // 사이트별 그룹핑
                     const siteGroups = groupBySite(filteredData);
                     APP_STATE.searchResults = siteGroups;
                     
-                    // 검색 요약 표시
                     searchSummary.innerHTML = `
                         <div style="color: #00ff7f;">
                             <strong>✅ ${siteGroups.length}개 사이트</strong><br>
@@ -513,7 +498,6 @@
                     `;
                     searchSummary.style.display = 'block';
                     
-                    // 테이블 렌더링
                     renderSiteTable(siteGroups);
                     breadcrumb.textContent = `홈 > 검색 결과 (${siteGroups.length}개 사이트)`;
                     
@@ -557,9 +541,6 @@
                 return Array.from(groups.values()).sort((a, b) => b.count - a.count);
             }
 
-            // ============================================
-            // 사이트 테이블 렌더링
-            // ============================================
             function renderSiteTable(siteGroups) {
                 const dashboardArea = document.getElementById('dashboard-area');
                 
@@ -602,7 +583,7 @@
             }
 
             // ============================================
-            // 사이트 선택 - 상세 정보 표시
+            // 사이트 선택 및 이력 데이터 로딩
             // ============================================
             window.selectSite = async function(index) {
                 const site = APP_STATE.searchResults[index];
@@ -621,48 +602,112 @@
                 
                 breadcrumb.textContent = `홈 > 검색 결과 > ${site.station_name || site.key}`;
                 
+                // 로딩 패널 표시
+                showLoadingPanel(site);
+                
                 try {
-                    // 충전기 상태 이력 조회
                     const chargerIds = site.chargers.map(c => c.charger_id).filter(id => id);
                     
                     if (chargerIds.length === 0) {
-                        showDetailPanel(site, []);
+                        showHistoryPanel(site, []);
                         return;
                     }
                     
+                    console.log(`📊 최근 30일 이력 조회 시작 (${chargerIds.length}개 충전기)`);
+                    
+                    // 최근 30일 데이터 조회 (성능 최적화)
+                    const startDate = dayjs().subtract(30, 'day').toISOString();
+                    
+                    const historyPromises = chargerIds.map(async (chargerId) => {
+                        try {
+                            const { data, error } = await APP_STATE.supabaseClient
+                                .from('status_history')
+                                .select('*')
+                                .eq('charger_id', chargerId)
+                                .gte('collected_at', startDate)
+                                .order('collected_at', { ascending: true })
+                                .limit(1000); // 충전기당 최대 1000개 레코드
+                            
+                            if (error) {
+                                console.warn(`충전기 ${chargerId} 조회 실패:`, error.message);
+                                return [];
+                            }
+                            return data || [];
+                        } catch (err) {
+                            console.warn(`충전기 ${chargerId} 조회 중 오류:`, err.message);
+                            return [];
+                        }
+                    });
+                    
+                    // 15초 타임아웃 설정
                     const timeoutPromise = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('데이터 로딩 시간 초과')), 20000)
+                        setTimeout(() => reject(new Error('데이터 로딩 시간 초과 (15초)')), 15000)
                     );
                     
-                    const queryPromise = APP_STATE.supabaseClient
-                        .from('status_history')
-                        .select('*')
-                        .in('charger_id', chargerIds)
-                        .order('collected_at', { ascending: false })
-                        .limit(100);
+                    const historyArrays = await Promise.race([
+                        Promise.all(historyPromises),
+                        timeoutPromise
+                    ]);
                     
-                    const { data: historyData, error } = await Promise.race([queryPromise, timeoutPromise]);
+                    // 결과 병합 및 정렬
+                    const allHistory = historyArrays.flat().sort((a, b) => 
+                        new Date(a.collected_at) - new Date(b.collected_at)
+                    );
                     
-                    if (error) throw error;
+                    console.log(`✅ 총 ${allHistory.length}개 이력 데이터 조회 완료`);
                     
-                    showDetailPanel(site, historyData || []);
+                    APP_STATE.historyData = allHistory;
+                    showHistoryPanel(site, allHistory);
                     
                 } catch (error) {
                     console.error('사이트 데이터 로딩 오류:', error);
-                    showDetailPanel(site, [], error.message);
+                    showHistoryPanel(site, [], error.message);
                 }
             };
 
-            function showDetailPanel(site, historyData, errorMessage = null) {
+            function showLoadingPanel(site) {
                 const dashboardArea = document.getElementById('dashboard-area');
+                const existingDetail = dashboardArea.querySelector('.detail-panel');
                 
-                // 기존 테이블 유지하고 하단에 상세 패널 추가
-                const existingTable = dashboardArea.querySelector('.table-container');
+                if (existingDetail) {
+                    existingDetail.remove();
+                }
+                
+                const loadingHtml = `
+                    <div class="detail-panel" style="display: block;">
+                        <div class="detail-header">
+                            <h3>🏢 ${site.station_name || site.key}</h3>
+                            <button class="close-btn" onclick="closeDetailPanel()">✖</button>
+                        </div>
+                        
+                        <div class="loading">
+                            <div style="font-size: 3rem; margin-bottom: 1rem;">⏳</div>
+                            <div>최근 30일 충전기 상태 이력 조회 중...</div>
+                            <div style="font-size: 0.9rem; color: #888; margin-top: 1rem;">
+                                ${site.count}개 충전기 데이터를 병렬로 처리하고 있습니다.
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                dashboardArea.insertAdjacentHTML('beforeend', loadingHtml);
+            }
+
+            // ============================================
+            // 히트맵 패널 렌더링
+            // ============================================
+            function showHistoryPanel(site, historyData, errorMessage = null) {
+                const dashboardArea = document.getElementById('dashboard-area');
+                const existingDetail = dashboardArea.querySelector('.detail-panel');
+                
+                if (existingDetail) {
+                    existingDetail.remove();
+                }
                 
                 let detailHtml = `
                     <div class="detail-panel" style="display: block;">
                         <div class="detail-header">
-                            <h3>🏢 ${site.station_name || site.key} 상세 정보</h3>
+                            <h3>🏢 ${site.station_name || site.key} 상태 이력 분석</h3>
                             <button class="close-btn" onclick="closeDetailPanel()">✖</button>
                         </div>
                         
@@ -688,85 +733,421 @@
                 
                 if (errorMessage) {
                     detailHtml += `
-                        <div style="color: #ff6b6b; padding: 1rem; background: #2d1a1a; border-radius: 6px;">
-                            ❌ 데이터 로딩 오류: ${errorMessage}
+                        <div style="color: #ff6b6b; padding: 1.5rem; background: #2d1a1a; border-radius: 6px; border: 1px solid #ff6b6b;">
+                            <h4>❌ 데이터 로딩 오류</h4>
+                            <p>${errorMessage}</p>
+                            <div style="font-size: 0.85rem; color: #aaa; margin-top: 1rem;">
+                                💡 해결 방법: 잠시 후 다시 시도하거나, 더 구체적인 검색어를 사용해보세요.
+                            </div>
                         </div>
                     `;
                 } else if (!historyData || historyData.length === 0) {
                     detailHtml += `
                         <div style="text-align: center; padding: 2rem; color: #aaa;">
-                            📭 상태 이력 데이터가 없습니다.
+                            <div style="font-size: 3rem; margin-bottom: 1rem;">📭</div>
+                            <h4>상태 이력 데이터가 없습니다</h4>
+                            <p>이 사이트의 충전기들에 대한 최근 30일 이력이 없습니다.</p>
                         </div>
                     `;
                 } else {
+                    // 범례 추가
                     detailHtml += `
-                        <h4 style="margin: 1.5rem 0 1rem; color: #aaa;">⚡ 충전기별 최근 상태 이력 (최근 ${historyData.length}개)</h4>
-                        <div class="table-container" style="max-height: 400px; overflow-y: auto;">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>수집 시간</th>
-                                        <th>충전기ID</th>
-                                        <th>상태</th>
-                                        <th>에러상태</th>
-                                        <th>사용량</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                    `;
-                    
-                    historyData.forEach(record => {
-                        const time = dayjs(record.collected_at).format('MM-DD HH:mm:ss');
-                        const status = record.status || '-';
-                        const errorState = record.error_state || '-';
-                        const usage = record.usage || '-';
+                        <div class="legend">
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #007bff, #0056b3);"></div>
+                                <span>⚡ 충전중</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #28a745, #1e7e34);"></div>
+                                <span>✓ 충전대기</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #dc3545, #a71d2a);"></div>
+                                <span>⚠ 점검/고장</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #6c757d, #495057);"></div>
+                                <span>○ 미수신</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #ffc107, #e0a800);"></div>
+                                <span>⚠ 경고</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: #1a1a1a;"></div>
+                                <span>- 데이터없음</span>
+                            </div>
+                        </div>
                         
-                        let statusClass = 'status-ready';
-                        if (status.includes('충전중') || status.includes('충전완료')) {
-                            statusClass = 'status-charging';
-                        } else if (status.includes('고장') || status.includes('점검')) {
-                            statusClass = 'status-maintenance';
-                        } else if (status.includes('미수신') || status.includes('통신')) {
-                            statusClass = 'status-offline';
-                        } else if (errorState && errorState !== '0' && errorState !== 'None' && errorState !== 'null') {
-                            statusClass = 'status-maintenance';
-                        }
+                        <div class="tabs">
+                            <button class="tab active" onclick="switchTab('realtime')">🕒 실시간 이력</button>
+                            <button class="tab" onclick="switchTab('weekly')">📅 주간 히트맵 (7일)</button>
+                            <button class="tab" onclick="switchTab('monthly')">📆 월간 히트맵 (30일)</button>
+                        </div>
                         
-                        detailHtml += `
-                            <tr>
-                                <td>${time}</td>
-                                <td style="font-family: monospace;">${record.charger_id}</td>
-                                <td><span class="status-badge ${statusClass}">${status}</span></td>
-                                <td style="color: ${errorState !== '-' && errorState !== '0' ? '#ff6b6b' : '#aaa'}">${errorState}</td>
-                                <td>${usage}</td>
-                            </tr>
-                        `;
-                    });
-                    
-                    detailHtml += `
-                                </tbody>
-                            </table>
+                        <div id="realtime-view" class="tab-content active">
+                            ${renderRealtimeView(historyData)}
+                        </div>
+                        
+                        <div id="weekly-view" class="tab-content">
+                            ${renderWeeklyHeatmap(site, historyData)}
+                        </div>
+                        
+                        <div id="monthly-view" class="tab-content">
+                            ${renderMonthlyHeatmap(site, historyData)}
                         </div>
                     `;
                 }
                 
                 detailHtml += `</div>`;
                 
-                // 기존 상세 패널이 있으면 제거
-                const existingDetail = dashboardArea.querySelector('.detail-panel');
-                if (existingDetail) {
-                    existingDetail.remove();
-                }
-                
-                // 새 상세 패널 추가
                 dashboardArea.insertAdjacentHTML('beforeend', detailHtml);
                 
-                // 스크롤 이동
                 const detailPanel = dashboardArea.querySelector('.detail-panel');
                 if (detailPanel) {
                     detailPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 }
             }
+
+            // ============================================
+            // 실시간 이력 뷰
+            // ============================================
+            function renderRealtimeView(historyData) {
+                if (!historyData || historyData.length === 0) {
+                    return '<div style="text-align: center; padding: 2rem; color: #aaa;">표시할 이력 데이터가 없습니다.</div>';
+                }
+                
+                // 최근 100개 레코드만 표시
+                const recentData = historyData.slice(-100).reverse();
+                
+                let html = `
+                    <div class="table-container" style="max-height: 500px; overflow-y: auto;">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>수집 시간</th>
+                                    <th>충전기ID</th>
+                                    <th>상태</th>
+                                    <th>에러상태</th>
+                                    <th>사용량</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                
+                recentData.forEach(record => {
+                    const time = dayjs(record.collected_at).format('MM-DD HH:mm:ss');
+                    const status = record.status || '-';
+                    const errorState = record.error_state || '-';
+                    const usage = record.usage || '-';
+                    
+                    const statusClass = getStatusClass(record.status, record.error_state);
+                    const errorStyle = (errorState !== '-' && errorState !== '0' && errorState !== 'None' && errorState !== 'null') 
+                        ? 'color: #ff6b6b; font-weight: bold;' : 'color: #aaa;';
+                    
+                    html += `
+                        <tr>
+                            <td>${time}</td>
+                            <td style="font-family: monospace;">${record.charger_id}</td>
+                            <td><span class="status-badge ${statusClass}">${status}</span></td>
+                            <td style="${errorStyle}">${errorState}</td>
+                            <td>${usage}</td>
+                        </tr>
+                    `;
+                });
+                
+                html += `
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="font-size: 0.85rem; color: #888; margin-top: 0.5rem; text-align: center;">
+                        최근 ${recentData.length}개 레코드 표시 (전체 ${historyData.length}개 중)
+                    </div>
+                `;
+                
+                return html;
+            }
+
+            // ============================================
+            // 주간 히트맵 렌더링 (7일 × 8시간대)
+            // ============================================
+            function renderWeeklyHeatmap(site, historyData) {
+                const chargerIds = site.chargers.map(c => c.charger_id).filter(id => id);
+                
+                // 최근 7일 날짜 생성
+                const days = [];
+                for (let i = 6; i >= 0; i--) {
+                    days.push(dayjs().subtract(i, 'day'));
+                }
+                
+                // 3시간 간격 시간대
+                const timeSlots = ['00', '03', '06', '09', '12', '15', '18', '21'];
+                
+                // 데이터 맵 생성
+                const dataMap = new Map();
+                historyData.forEach(record => {
+                    const time = dayjs(record.collected_at);
+                    const dateKey = time.format('YYYY-MM-DD');
+                    const hourSlot = Math.floor(time.hour() / 3) * 3;
+                    const key = `${record.charger_id}_${dateKey}_${hourSlot}`;
+                    
+                    // 같은 시간대에 여러 데이터가 있으면 가장 최신 것 사용
+                    if (!dataMap.has(key) || time.isAfter(dayjs(dataMap.get(key).collected_at))) {
+                        dataMap.set(key, record);
+                    }
+                });
+                
+                let html = `
+                    <div class="heatmap-container">
+                        <table class="heatmap-table">
+                            <thead>
+                                <tr>
+                                    <th class="charger-header">충전기ID</th>
+                `;
+                
+                // 날짜별 시간대 헤더
+                days.forEach(day => {
+                    timeSlots.forEach(hour => {
+                        html += `<th>${day.format('MM/DD')}<br><span style="font-size:0.7rem;">${hour}시</span></th>`;
+                    });
+                });
+                
+                html += `
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                
+                // 각 충전기별 행 생성
+                chargerIds.forEach(chargerId => {
+                    html += `<tr><td class="charger-label">${chargerId}</td>`;
+                    
+                    days.forEach(day => {
+                        timeSlots.forEach(hour => {
+                            const dateKey = day.format('YYYY-MM-DD');
+                            const key = `${chargerId}_${dateKey}_${hour}`;
+                            const record = dataMap.get(key);
+                            
+                            if (record) {
+                                const cellClass = getHeatmapCellClass(record.status, record.error_state);
+                                const emoji = getStatusEmoji(record.status, record.error_state);
+                                const tooltipText = `${chargerId}\\n${day.format('MM/DD')} ${hour}시\\n${record.status || '-'}\\n${record.error_state ? 'Error: ' + record.error_state : ''}`;
+                                
+                                html += `
+                                    <td>
+                                        <div class="heatmap-cell ${cellClass}" 
+                                             onmouseover="showTooltip(event, '${tooltipText}')"
+                                             onmouseout="hideTooltip()">
+                                            ${emoji}
+                                        </div>
+                                    </td>
+                                `;
+                            } else {
+                                html += `<td><div class="heatmap-cell cell-empty">-</div></td>`;
+                            }
+                        });
+                    });
+                    
+                    html += `</tr>`;
+                });
+                
+                html += `
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="font-size: 0.85rem; color: #888; margin-top: 0.5rem;">
+                        💡 각 셀은 3시간 단위의 대표 상태를 표시합니다. 셀에 마우스를 올려 상세 정보를 확인하세요.
+                    </div>
+                `;
+                
+                return html;
+            }
+
+            // ============================================
+            // 월간 히트맵 렌더링 (30일)
+            // ============================================
+            function renderMonthlyHeatmap(site, historyData) {
+                const chargerIds = site.chargers.map(c => c.charger_id).filter(id => id);
+                
+                // 최근 30일 날짜 생성
+                const days = [];
+                for (let i = 29; i >= 0; i--) {
+                    days.push(dayjs().subtract(i, 'day'));
+                }
+                
+                // 일별 데이터 집계
+                const dailyDataMap = new Map();
+                historyData.forEach(record => {
+                    const dateKey = dayjs(record.collected_at).format('YYYY-MM-DD');
+                    const key = `${record.charger_id}_${dateKey}`;
+                    
+                    if (!dailyDataMap.has(key)) {
+                        dailyDataMap.set(key, []);
+                    }
+                    dailyDataMap.get(key).push(record);
+                });
+                
+                let html = `
+                    <div class="heatmap-container">
+                        <table class="heatmap-table">
+                            <thead>
+                                <tr>
+                                    <th class="charger-header">충전기ID</th>
+                `;
+                
+                // 날짜 헤더 (간격을 두고 표시)
+                days.forEach((day, index) => {
+                    if (index % 2 === 0) { // 2일마다 표시
+                        html += `<th>${day.format('MM/DD')}<br><span style="font-size:0.7rem;">${day.format('ddd')}</span></th>`;
+                    } else {
+                        html += `<th style="font-size:0.7rem;">${day.format('DD')}</th>`;
+                    }
+                });
+                
+                html += `
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                
+                // 각 충전기별 행 생성
+                chargerIds.forEach(chargerId => {
+                    html += `<tr><td class="charger-label">${chargerId}</td>`;
+                    
+                    days.forEach(day => {
+                        const dateKey = day.format('YYYY-MM-DD');
+                        const key = `${chargerId}_${dateKey}`;
+                        const dayRecords = dailyDataMap.get(key) || [];
+                        
+                        if (dayRecords.length > 0) {
+                            // 하루 중 가장 중요한 상태 결정 (우선순위: 에러 > 충전 > 대기)
+                            const statusSummary = summarizeDayStatus(dayRecords);
+                            const cellClass = getHeatmapCellClass(statusSummary.status, statusSummary.error);
+                            const emoji = getStatusEmoji(statusSummary.status, statusSummary.error);
+                            const tooltipText = `${chargerId}\\n${day.format('MM/DD (ddd)')}\\n${statusSummary.description}\\n${dayRecords.length}회 수집`;
+                            
+                            html += `
+                                <td>
+                                    <div class="heatmap-cell ${cellClass}" 
+                                         onmouseover="showTooltip(event, '${tooltipText}')"
+                                         onmouseout="hideTooltip()">
+                                        ${emoji}
+                                    </div>
+                                </td>
+                            `;
+                        } else {
+                            html += `<td><div class="heatmap-cell cell-empty">-</div></td>`;
+                        }
+                    });
+                    
+                    html += `</tr>`;
+                });
+                
+                html += `
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="font-size: 0.85rem; color: #888; margin-top: 0.5rem;">
+                        💡 각 셀은 해당 일자의 대표 상태를 표시합니다. 우선순위: 에러 > 충전 > 대기
+                    </div>
+                `;
+                
+                return html;
+            }
+
+            // ============================================
+            // 유틸리티 함수들
+            // ============================================
+            function getStatusClass(status, errorState) {
+                if (errorState && errorState !== '0' && errorState !== 'None' && errorState !== 'null') {
+                    return 'status-maintenance';
+                }
+                if (!status) return 'status-offline';
+                
+                const s = status.toLowerCase();
+                if (s.includes('충전중') || s.includes('충전완료')) return 'status-charging';
+                if (s.includes('고장') || s.includes('점검')) return 'status-maintenance';
+                if (s.includes('미수신') || s.includes('통신')) return 'status-offline';
+                if (s.includes('경고')) return 'status-warning';
+                
+                return 'status-ready';
+            }
+
+            function getHeatmapCellClass(status, errorState) {
+                if (errorState && errorState !== '0' && errorState !== 'None' && errorState !== 'null') {
+                    return 'cell-maintenance';
+                }
+                if (!status) return 'cell-offline';
+                
+                const s = status.toLowerCase();
+                if (s.includes('충전중') || s.includes('충전완료')) return 'cell-charging';
+                if (s.includes('고장') || s.includes('점검')) return 'cell-maintenance';
+                if (s.includes('미수신') || s.includes('통신')) return 'cell-offline';
+                if (s.includes('경고')) return 'cell-warning';
+                
+                return 'cell-ready';
+            }
+
+            function getStatusEmoji(status, errorState) {
+                if (errorState && errorState !== '0' && errorState !== 'None' && errorState !== 'null') {
+                    return '⚠';
+                }
+                if (!status) return '○';
+                
+                const s = status.toLowerCase();
+                if (s.includes('충전중') || s.includes('충전완료')) return '⚡';
+                if (s.includes('고장') || s.includes('점검')) return '⚠';
+                if (s.includes('미수신') || s.includes('통신')) return '○';
+                if (s.includes('경고')) return '⚠';
+                
+                return '✓';
+            }
+
+            function summarizeDayStatus(dayRecords) {
+                // 에러 상태가 하나라도 있으면 에러로 분류
+                const hasError = dayRecords.some(r => r.error_state && r.error_state !== '0' && r.error_state !== 'None' && r.error_state !== 'null');
+                if (hasError) {
+                    return { status: '고장', error: '1', description: '에러 발생' };
+                }
+                
+                // 충전 이력이 있으면 충전으로 분류
+                const hasCharging = dayRecords.some(r => r.status && (r.status.includes('충전중') || r.status.includes('충전완료')));
+                if (hasCharging) {
+                    return { status: '충전중', error: null, description: '충전 활동' };
+                }
+                
+                // 그 외는 대기로 분류
+                return { status: '대기', error: null, description: '정상 대기' };
+            }
+
+            // ============================================
+            // 전역 함수들
+            // ============================================
+            window.showTooltip = function(event, text) {
+                const tooltip = document.getElementById('tooltip');
+                tooltip.innerHTML = text.replace(/\\n/g, '<br>');
+                tooltip.style.display = 'block';
+                tooltip.style.left = event.pageX + 10 + 'px';
+                tooltip.style.top = event.pageY + 10 + 'px';
+            };
+
+            window.hideTooltip = function() {
+                document.getElementById('tooltip').style.display = 'none';
+            };
+
+            window.switchTab = function(tabName) {
+                // 탭 버튼 활성화 전환
+                document.querySelectorAll('.tab').forEach(tab => {
+                    tab.classList.remove('active');
+                });
+                event.target.classList.add('active');
+                
+                // 탭 콘텐츠 전환
+                document.querySelectorAll('.tab-content').forEach(content => {
+                    content.classList.remove('active');
+                });
+                document.getElementById(`${tabName}-view`).classList.add('active');
+            };
 
             window.closeDetailPanel = function() {
                 const detailPanel = document.querySelector('.detail-panel');
@@ -774,18 +1155,16 @@
                     detailPanel.remove();
                 }
                 
-                // 선택된 행 하이라이트 제거
                 document.querySelectorAll('.table-container tbody tr').forEach(row => {
                     row.classList.remove('selected');
                 });
                 
-                // 브레드크럼 업데이트
                 const breadcrumb = document.getElementById('breadcrumb');
                 breadcrumb.textContent = `홈 > 검색 결과 (${APP_STATE.searchResults.length}개 사이트)`;
             };
 
             // ============================================
-            // 이벤트 리스너
+            // 이벤트 리스너 등록
             // ============================================
             document.addEventListener('DOMContentLoaded', function() {
                 initialize();
