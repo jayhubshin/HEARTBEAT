@@ -434,86 +434,111 @@
             // 검색 함수
             // ============================================
             async function performSearch() {
-                const keyword = document.getElementById('search-input').value.trim();
-                const dashboardArea = document.getElementById('dashboard-area');
-                const searchBtn = document.getElementById('search-btn');
-                const searchSummary = document.getElementById('search-summary');
-                const breadcrumb = document.getElementById('breadcrumb');
-                
-                if (!keyword) {
-                    alert('검색어를 입력하세요');
-                    return;
-                }
-                
-                if (!APP_STATE.supabaseClient) {
-                    alert('데이터베이스가 연결되지 않았습니다');
-                    return;
-                }
-                
-                searchBtn.disabled = true;
-                searchBtn.textContent = '검색 중...';
-                dashboardArea.innerHTML = '<div class="loading">🔄 검색 중...</div>';
-                searchSummary.style.display = 'none';
-                
-                try {
-                    const tokens = keyword.split(/\s+/).filter(t => t.length > 0);
-                    const primaryKeyword = tokens[0];
-                    
-                    const { data, error } = await APP_STATE.supabaseClient
-                        .from('charger_master')
-                        .select('*')
-                        .or(`station_name.ilike.%${primaryKeyword}%,address1.ilike.%${primaryKeyword}%,site_id.ilike.%${primaryKeyword}%,station_id.ilike.%${primaryKeyword}%`)
-                        .limit(200);
-                    
-                    if (error) throw error;
-                    
-                    if (!data || data.length === 0) {
-                        dashboardArea.innerHTML = `
-                            <div class="empty-state">
-                                <div class="empty-state-icon">😕</div>
-                                <h3>검색 결과가 없습니다</h3>
-                                <p>다른 검색어로 다시 시도해보세요.</p>
-                            </div>
-                        `;
-                        return;
-                    }
-                    
-                    // 다중 키워드 필터링
-                    let filteredData = data;
-                    if (tokens.length > 1) {
-                        filteredData = data.filter(row => {
-                            const searchText = `${row.station_name || ''} ${row.address1 || ''}`.toLowerCase();
-                            return tokens.every(token => searchText.includes(token.toLowerCase()));
-                        });
-                    }
-                    
-                    const siteGroups = groupBySite(filteredData);
-                    APP_STATE.searchResults = siteGroups;
-                    
-                    searchSummary.innerHTML = `
-                        <div style="color: #00ff7f;">
-                            <strong>✅ ${siteGroups.length}개 사이트</strong><br>
-                            <span style="font-size: 0.75rem; color: #aaa;">총 ${filteredData.length}대 충전기</span>
-                        </div>
-                    `;
-                    searchSummary.style.display = 'block';
-                    
-                    renderSiteTable(siteGroups);
-                    breadcrumb.textContent = `홈 > 검색 결과 (${siteGroups.length}개 사이트)`;
-                    
-                } catch (error) {
-                    console.error('검색 오류:', error);
-                    dashboardArea.innerHTML = `
-                        <div style="padding: 2rem; background: #2d1a1a; border-radius: 8px; border: 1px solid #ff6b6b; color: #ff6b6b;">
-                            <h3>❌ 검색 오류</h3>
-                            <p>${error.message}</p>
-                        </div>
-                    `;
-                } finally {
-                    searchBtn.disabled = false;
-                    searchBtn.textContent = '🔍 검색';
-                }
+            const keyword = document.getElementById('search-input').value.trim();
+            const dashboardArea = document.getElementById('dashboard-area');
+            const searchBtn = document.getElementById('search-btn');
+            const searchSummary = document.getElementById('search-summary');
+            const breadcrumb = document.getElementById('breadcrumb');
+            
+            if (!keyword) {
+                alert('검색어를 입력하세요');
+                return;
             }
+            
+            if (!APP_STATE.supabaseClient) {
+                alert('데이터베이스가 연결되지 않았습니다');
+                return;
+            }
+            
+            searchBtn.disabled = true;
+            searchBtn.textContent = '검색 중...';
+            dashboardArea.innerHTML = '<div class="loading">🔄 검색 중...</div>';
+            searchSummary.style.display = 'none';
+            
+            try {
+                const tokens = keyword.split(/\s+/).filter(t => t.length > 0);
+                const primaryKeyword = tokens[0];
+                
+                const { data, error } = await APP_STATE.supabaseClient
+                    .from('charger_master')
+                    .select('*')
+                    .or(`station_name.ilike.%${primaryKeyword}%,address1.ilike.%${primaryKeyword}%,site_id.ilike.%${primaryKeyword}%,station_id.ilike.%${primaryKeyword}%`)
+                    .limit(500); // 중복 제거 전 충분한 데이터 확보
+                
+                if (error) throw error;
+                
+                if (!data || data.length === 0) {
+                    dashboardArea.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">😕</div>
+                            <h3>검색 결과가 없습니다</h3>
+                            <p>다른 검색어로 다시 시도해보세요.</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                // 다중 키워드 필터링
+                let filteredData = data;
+                if (tokens.length > 1) {
+                    filteredData = data.filter(row => {
+                        const searchText = `${row.station_name || ''} ${row.address1 || ''}`.toLowerCase();
+                        return tokens.every(token => searchText.includes(token.toLowerCase()));
+                    });
+                }
+                
+                // ⚡ 핵심: charger_id 기준으로 중복 제거
+                const uniqueChargers = [];
+                const seenChargerIds = new Set();
+                
+                filteredData.forEach(item => {
+                    if (item.charger_id && !seenChargerIds.has(item.charger_id)) {
+                        seenChargerIds.add(item.charger_id);
+                        uniqueChargers.push(item);
+                    }
+                });
+                
+                console.log(`🔍 검색 결과: 원본 ${data.length}개 → 필터링 ${filteredData.length}개 → 중복제거 ${uniqueChargers.length}개`);
+                
+                if (uniqueChargers.length === 0) {
+                    dashboardArea.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">😕</div>
+                            <h3>유효한 충전기가 없습니다</h3>
+                            <p>검색어를 조정해보세요.</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                const siteGroups = groupBySite(uniqueChargers);
+                APP_STATE.searchResults = siteGroups;
+                
+                searchSummary.innerHTML = `
+                    <div style="color: #00ff7f;">
+                        <strong>✅ ${siteGroups.length}개 사이트</strong><br>
+                        <span style="font-size: 0.75rem; color: #aaa;">총 ${uniqueChargers.length}대 충전기</span>
+                    </div>
+                `;
+                searchSummary.style.display = 'block';
+                
+                renderSiteTable(siteGroups);
+                breadcrumb.textContent = `홈 > 검색 결과 (${siteGroups.length}개 사이트)`;
+                
+            } catch (error) {
+                console.error('검색 오류:', error);
+                dashboardArea.innerHTML = `
+                    <div style="padding: 2rem; background: #2d1a1a; border-radius: 8px; border: 1px solid #ff6b6b; color: #ff6b6b;">
+                        <h3>❌ 검색 오류</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            } finally {
+                searchBtn.disabled = false;
+                searchBtn.textContent = '🔍 검색';
+            }
+        }
+
 
             function groupBySite(data) {
                 const groups = new Map();
