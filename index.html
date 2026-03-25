@@ -894,7 +894,7 @@
             }
 
             // ============================================
-            // 주간 히트맵 렌더링 (7일 × 8시간대)
+            // 주간 히트맵 렌더링 (시간대 문제 해결)
             // ============================================
             function renderWeeklyHeatmap(site, historyData) {
                 const chargerIds = site.chargers.map(c => c.charger_id).filter(id => id);
@@ -908,21 +908,68 @@
                 // 3시간 간격 시간대
                 const timeSlots = ['00', '03', '06', '09', '12', '15', '18', '21'];
                 
-                // 데이터 맵 생성
+                // 데이터 맵 생성 (UTC → KST 변환 적용)
                 const dataMap = new Map();
+                const debugInfo = { processed: 0, mapped: 0 };
+                
+                console.log(`📊 히트맵 데이터 처리 시작: ${historyData.length}개 레코드`);
+                
                 historyData.forEach(record => {
-                    const time = dayjs(record.collected_at);
+                    debugInfo.processed++;
+                    
+                    // UTC → KST 변환 (핵심 해결책)
+                    let time = dayjs(record.collected_at);
+                    
+                    // UTC 시간인지 확인하고 KST로 변환
+                    if (!time.format('Z') || time.format('Z') === '+00:00') {
+                        time = time.add(9, 'hour'); // UTC + 9시간 = KST
+                    }
+                    
                     const dateKey = time.format('YYYY-MM-DD');
-                    const hourSlot = Math.floor(time.hour() / 3) * 3;
-                    const key = `${record.charger_id}_${dateKey}_${hourSlot}`;
+                    const hour = time.hour();
+                    const hourSlot = Math.floor(hour / 3) * 3;
+                    const hourSlotStr = hourSlot.toString().padStart(2, '0');
+                    
+                    const key = `${record.charger_id}_${dateKey}_${hourSlotStr}`;
                     
                     // 같은 시간대에 여러 데이터가 있으면 가장 최신 것 사용
                     if (!dataMap.has(key) || time.isAfter(dayjs(dataMap.get(key).collected_at))) {
                         dataMap.set(key, record);
+                        debugInfo.mapped++;
                     }
                 });
                 
+                // 시간대별 데이터 분포 계산
+                const slotDistribution = {};
+                timeSlots.forEach(slot => slotDistribution[slot] = 0);
+                
+                dataMap.forEach((value, key) => {
+                    const slot = key.split('_')[2];
+                    if (slotDistribution[slot] !== undefined) {
+                        slotDistribution[slot]++;
+                    }
+                });
+                
+                console.log('✅ 처리 완료:', debugInfo);
+                console.log('📊 시간대별 분포:', slotDistribution);
+                
                 let html = `
+                    <div style="margin-bottom: 1rem; padding: 1rem; background: #1e1e1e; border-radius: 6px;">
+                        <div style="font-size: 0.9rem; color: #aaa; margin-bottom: 0.5rem;">
+                            <strong>📊 시간대별 데이터 분포 (KST 기준):</strong>
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; font-size: 0.85rem;">
+                `;
+                
+                timeSlots.forEach(slot => {
+                    const count = slotDistribution[slot];
+                    const color = count > 0 ? '#00ff7f' : '#666';
+                    html += `<div style="color: ${color};">${slot}시: ${count}개</div>`;
+                });
+                
+                html += `
+                        </div>
+                    </div>
                     <div class="heatmap-container">
                         <table class="heatmap-table">
                             <thead>
@@ -956,7 +1003,14 @@
                             if (record) {
                                 const cellClass = getHeatmapCellClass(record.status, record.error_state);
                                 const emoji = getStatusEmoji(record.status, record.error_state);
-                                const tooltipText = `${chargerId}\\n${day.format('MM/DD')} ${hour}시\\n${record.status || '-'}\\n${record.error_state ? 'Error: ' + record.error_state : ''}`;
+                                
+                                // KST 시간으로 표시
+                                let displayTime = dayjs(record.collected_at);
+                                if (!displayTime.format('Z') || displayTime.format('Z') === '+00:00') {
+                                    displayTime = displayTime.add(9, 'hour');
+                                }
+                                
+                                const tooltipText = `${chargerId}\\n${day.format('MM/DD')} ${hour}시\\n실제시간: ${displayTime.format('HH:mm')}\\n상태: ${record.status || '-'}${record.error_state && record.error_state !== '0' ? '\\n에러: ' + record.error_state : ''}`;
                                 
                                 html += `
                                     <td>
@@ -968,7 +1022,16 @@
                                     </td>
                                 `;
                             } else {
-                                html += `<td><div class="heatmap-cell cell-empty">-</div></td>`;
+                                const tooltipText = `${chargerId}\\n${day.format('MM/DD')} ${hour}시\\n데이터 없음`;
+                                html += `
+                                    <td>
+                                        <div class="heatmap-cell cell-empty" 
+                                             onmouseover="showTooltip(event, '${tooltipText}')"
+                                             onmouseout="hideTooltip()">
+                                            -
+                                        </div>
+                                    </td>
+                                `;
                             }
                         });
                     });
@@ -981,12 +1044,13 @@
                         </table>
                     </div>
                     <div style="font-size: 0.85rem; color: #888; margin-top: 0.5rem;">
-                        💡 각 셀은 3시간 단위의 대표 상태를 표시합니다. 셀에 마우스를 올려 상세 정보를 확인하세요.
+                        💡 각 셀은 3시간 단위의 대표 상태를 표시합니다. 시간은 한국 표준시(KST) 기준으로 변환됩니다.
                     </div>
                 `;
                 
                 return html;
             }
+
 
             // ============================================
             // 월간 히트맵 렌더링 (30일)
