@@ -141,13 +141,35 @@
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         
-        /* 히트맵 테이블 스타일 */
+        /* 히트맵 컨테이너 (가로 스크롤 최적화) */
         .heatmap-container {
             background: #262730;
             border-radius: 8px;
             border: 1px solid #3a3a3a;
-            overflow: auto;
+            overflow-x: auto;
+            overflow-y: hidden;
             max-height: 600px;
+            position: relative;
+        }
+        
+        /* 스크롤바 스타일링 */
+        .heatmap-container::-webkit-scrollbar {
+            height: 10px;
+        }
+        
+        .heatmap-container::-webkit-scrollbar-track {
+            background: #1a1a1a;
+            border-radius: 5px;
+        }
+        
+        .heatmap-container::-webkit-scrollbar-thumb {
+            background: #4a9eff;
+            border-radius: 5px;
+            border: 2px solid #1a1a1a;
+        }
+        
+        .heatmap-container::-webkit-scrollbar-thumb:hover {
+            background: #6bb3ff;
         }
         
         .heatmap-table {
@@ -168,27 +190,18 @@
             z-index: 5;
         }
         
-        .heatmap-table th.charger-header {
-            text-align: left;
-            padding-left: 1rem;
-            min-width: 120px;
+        /* 충전기 ID 컬럼 고정 (스크롤 시에도 보이도록) */
+        .heatmap-table th.charger-header,
+        .heatmap-table td.charger-label {
             position: sticky;
             left: 0;
-            z-index: 6;
+            z-index: 10;
             background: #1e1e1e;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.3);
         }
         
-        .heatmap-table td.charger-label {
-            text-align: left;
-            padding: 0.5rem 1rem;
-            font-weight: 600;
-            background: #262730;
-            position: sticky;
-            left: 0;
-            z-index: 4;
-            font-family: monospace;
-            font-size: 0.85rem;
-            border-right: 2px solid #3a3a3a;
+        .heatmap-table th.charger-header {
+            z-index: 11; /* 헤더가 더 위에 */
         }
         
         .heatmap-cell {
@@ -608,7 +621,7 @@
             }
 
             // ============================================
-            // 사이트 선택 및 이력 데이터 로딩
+            // 사이트 선택 및 전체 이력 데이터 로딩
             // ============================================
             window.selectSite = async function(index) {
                 const site = APP_STATE.searchResults[index];
@@ -638,20 +651,17 @@
                         return;
                     }
                     
-                    console.log(`📊 최근 30일 이력 조회 시작 (${chargerIds.length}개 충전기)`);
+                    console.log(`📊 전체 기간 이력 조회 시작 (${chargerIds.length}개 충전기)`);
                     
-                    // 최근 30일 데이터 조회 (성능 최적화)
-                    const startDate = dayjs().subtract(30, 'day').toISOString();
-                    
+                    // ⚡ 핵심 변경: 날짜 제한(.gte) 제거하고 전체 데이터 조회
                     const historyPromises = chargerIds.map(async (chargerId) => {
                         try {
                             const { data, error } = await APP_STATE.supabaseClient
                                 .from('status_history')
                                 .select('*')
                                 .eq('charger_id', chargerId)
-                                .gte('collected_at', startDate)
-                                .order('collected_at', { ascending: true })
-                                .limit(1000); // 충전기당 최대 1000개 레코드
+                                .order('collected_at', { ascending: true }) // 시간순 정렬
+                                .limit(3000); // 충전기당 최대 3000개 레코드 (약 6개월~1년)
                             
                             if (error) {
                                 console.warn(`충전기 ${chargerId} 조회 실패:`, error.message);
@@ -664,9 +674,9 @@
                         }
                     });
                     
-                    // 15초 타임아웃 설정
+                    // 25초 타임아웃 설정 (전체 데이터 조회이므로 시간 증가)
                     const timeoutPromise = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('데이터 로딩 시간 초과 (15초)')), 15000)
+                        setTimeout(() => reject(new Error('데이터 로딩 시간 초과 (25초)')), 25000)
                     );
                     
                     const historyArrays = await Promise.race([
@@ -679,7 +689,15 @@
                         new Date(a.collected_at) - new Date(b.collected_at)
                     );
                     
-                    console.log(`✅ 총 ${allHistory.length}개 이력 데이터 조회 완료`);
+                    console.log(`✅ 총 ${allHistory.length}개 전체 이력 데이터 조회 완료`);
+                    
+                    // 데이터 기간 정보 출력
+                    if (allHistory.length > 0) {
+                        const firstDate = dayjs(allHistory[0].collected_at);
+                        const lastDate = dayjs(allHistory[allHistory.length - 1].collected_at);
+                        const totalDays = lastDate.diff(firstDate, 'day') + 1;
+                        console.log(`📅 데이터 기간: ${firstDate.format('YYYY-MM-DD')} ~ ${lastDate.format('YYYY-MM-DD')} (${totalDays}일)`);
+                    }
                     
                     APP_STATE.historyData = allHistory;
                     showHistoryPanel(site, allHistory);
@@ -689,6 +707,7 @@
                     showHistoryPanel(site, [], error.message);
                 }
             };
+
 
             function showLoadingPanel(site) {
                 const dashboardArea = document.getElementById('dashboard-area');
@@ -894,71 +913,88 @@
             }
 
             // ============================================
-            // 주간 히트맵 렌더링 (시간대 문제 해결)
+            // 전체 기간 주간 히트맵 렌더링 (3시간 단위, 스크롤 가능)
             // ============================================
             function renderWeeklyHeatmap(site, historyData) {
                 const chargerIds = site.chargers.map(c => c.charger_id).filter(id => id);
                 
-                // 최근 7일 날짜 생성
-                const days = [];
-                for (let i = 6; i >= 0; i--) {
-                    days.push(dayjs().subtract(i, 'day'));
+                if (!historyData || historyData.length === 0) {
+                    return '<div style="text-align: center; padding: 2rem; color: #aaa;">표시할 이력 데이터가 없습니다.</div>';
                 }
                 
-                // 3시간 간격 시간대
-                const timeSlots = ['00', '03', '06', '09', '12', '15', '18', '21'];
-                
-                // 데이터 맵 생성 (UTC → KST 변환 적용)
-                const dataMap = new Map();
-                const debugInfo = { processed: 0, mapped: 0 };
-                
-                console.log(`📊 히트맵 데이터 처리 시작: ${historyData.length}개 레코드`);
-                
-                historyData.forEach(record => {
-                    debugInfo.processed++;
-                    
-                    // UTC → KST 변환 (핵심 해결책)
+                // 1. 데이터에서 실제 날짜 범위 추출
+                const dateSet = new Set();
+                const normalizedHistory = historyData.map(record => {
+                    // UTC → KST 변환
                     let time = dayjs(record.collected_at);
-                    
-                    // UTC 시간인지 확인하고 KST로 변환
                     if (!time.format('Z') || time.format('Z') === '+00:00') {
-                        time = time.add(9, 'hour'); // UTC + 9시간 = KST
+                        time = time.add(9, 'hour');
                     }
-                    
                     const dateKey = time.format('YYYY-MM-DD');
-                    const hour = time.hour();
-                    const hourSlot = Math.floor(hour / 3) * 3;
-                    const hourSlotStr = hourSlot.toString().padStart(2, '0');
-                    
-                    const key = `${record.charger_id}_${dateKey}_${hourSlotStr}`;
-                    
-                    // 같은 시간대에 여러 데이터가 있으면 가장 최신 것 사용
-                    if (!dataMap.has(key) || time.isAfter(dayjs(dataMap.get(key).collected_at))) {
-                        dataMap.set(key, record);
-                        debugInfo.mapped++;
-                    }
+                    dateSet.add(dateKey);
+                    return { ...record, kst_time: time, dateKey };
                 });
                 
-                // 시간대별 데이터 분포 계산
+                // 2. 전체 기간 날짜 리스트 생성 (정렬)
+                const days = Array.from(dateSet).sort().map(d => dayjs(d));
+                
+                // 3. 3시간 간격 시간대
+                const timeSlots = ['00', '03', '06', '09', '12', '15', '18', '21'];
+                
+                // 4. 데이터 매핑
+                const dataMap = new Map();
                 const slotDistribution = {};
                 timeSlots.forEach(slot => slotDistribution[slot] = 0);
                 
-                dataMap.forEach((value, key) => {
+                normalizedHistory.forEach(record => {
+                    const time = record.kst_time;
+                    const dateKey = record.dateKey;
+                    const hour = time.hour();
+                    const hourSlot = Math.floor(hour / 3) * 3;
+                    const hourSlotStr = hourSlot.toString().padStart(2, '0');
+                    const key = `${record.charger_id}_${dateKey}_${hourSlotStr}`;
+                    
+                    // 같은 슬롯에 여러 데이터가 있으면 최신 것 사용
+                    if (!dataMap.has(key) || time.isAfter(dataMap.get(key).kst_time)) {
+                        dataMap.set(key, record);
+                    }
+                });
+                
+                // 시간대별 분포 계산
+                dataMap.forEach((record, key) => {
                     const slot = key.split('_')[2];
                     if (slotDistribution[slot] !== undefined) {
                         slotDistribution[slot]++;
                     }
                 });
                 
-                console.log('✅ 처리 완료:', debugInfo);
-                console.log('📊 시간대별 분포:', slotDistribution);
-                
                 let html = `
                     <div style="margin-bottom: 1rem; padding: 1rem; background: #1e1e1e; border-radius: 6px;">
-                        <div style="font-size: 0.9rem; color: #aaa; margin-bottom: 0.5rem;">
-                            <strong>📊 시간대별 데이터 분포 (KST 기준):</strong>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                            <div>
+                                <div style="font-size: 0.8rem; color: #888;">📅 전체 데이터 기간</div>
+                                <div style="font-size: 1.1rem; font-weight: bold; color: #4a9eff;">
+                                    ${days.length > 0 ? `${days[0].format('YYYY-MM-DD')} ~ ${days[days.length - 1].format('YYYY-MM-DD')}` : '-'}
+                                </div>
+                                <div style="font-size: 0.75rem; color: #aaa; margin-top: 0.25rem;">
+                                    총 ${days.length}일 기간
+                                </div>
+                            </div>
+                            <div>
+                                <div style="font-size: 0.8rem; color: #888;">📊 데이터 포인트</div>
+                                <div style="font-size: 1.1rem; font-weight: bold; color: #00ff7f;">
+                                    ${dataMap.size.toLocaleString()}개
+                                </div>
+                                <div style="font-size: 0.75rem; color: #aaa; margin-top: 0.25rem;">
+                                    ${chargerIds.length}대 충전기 × 8시간대
+                                </div>
+                            </div>
                         </div>
-                        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; font-size: 0.85rem;">
+                        
+                        <div style="font-size: 0.85rem; color: #aaa; margin-bottom: 0.5rem;">
+                            <strong>📊 시간대별 데이터 분포 (KST):</strong>
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; font-size: 0.8rem;">
                 `;
                 
                 timeSlots.forEach(slot => {
@@ -970,7 +1006,12 @@
                 html += `
                         </div>
                     </div>
-                    <div class="heatmap-container">
+                    
+                    <div style="margin-bottom: 0.5rem; font-size: 0.85rem; color: #888;">
+                        💡 가로 스크롤로 전체 기간 탐색 가능 | 오른쪽 끝이 최신 데이터
+                    </div>
+                    
+                    <div class="heatmap-container" id="weekly-scroll-container">
                         <table class="heatmap-table">
                             <thead>
                                 <tr>
@@ -980,7 +1021,7 @@
                 // 날짜별 시간대 헤더
                 days.forEach(day => {
                     timeSlots.forEach(hour => {
-                        html += `<th>${day.format('MM/DD')}<br><span style="font-size:0.7rem;">${hour}시</span></th>`;
+                        html += `<th style="min-width: 45px;">${day.format('MM/DD')}<br><span style="font-size:0.7rem;">${hour}시</span></th>`;
                     });
                 });
                 
@@ -1003,14 +1044,8 @@
                             if (record) {
                                 const cellClass = getHeatmapCellClass(record.status, record.error_state);
                                 const emoji = getStatusEmoji(record.status, record.error_state);
-                                
-                                // KST 시간으로 표시
-                                let displayTime = dayjs(record.collected_at);
-                                if (!displayTime.format('Z') || displayTime.format('Z') === '+00:00') {
-                                    displayTime = displayTime.add(9, 'hour');
-                                }
-                                
-                                const tooltipText = `${chargerId}\\n${day.format('MM/DD')} ${hour}시\\n실제시간: ${displayTime.format('HH:mm')}\\n상태: ${record.status || '-'}${record.error_state && record.error_state !== '0' ? '\\n에러: ' + record.error_state : ''}`;
+                                const time = record.kst_time;
+                                const tooltipText = `${chargerId}\\n${day.format('MM/DD')} ${hour}시\\n실제: ${time.format('HH:mm')}\\n상태: ${record.status || '-'}${isRealError(record.error_state) ? '\\n⚠ ' + record.error_state : ''}`;
                                 
                                 html += `
                                     <td>
@@ -1043,33 +1078,49 @@
                             </tbody>
                         </table>
                     </div>
-                    <div style="font-size: 0.85rem; color: #888; margin-top: 0.5rem;">
-                        💡 각 셀은 3시간 단위의 대표 상태를 표시합니다. 시간은 한국 표준시(KST) 기준으로 변환됩니다.
-                    </div>
                 `;
+                
+                // 스크롤을 오른쪽 끝(최신 데이터)으로 자동 이동
+                setTimeout(() => {
+                    const container = document.getElementById('weekly-scroll-container');
+                    if (container) {
+                        container.scrollLeft = container.scrollWidth - container.clientWidth;
+                    }
+                }, 100);
                 
                 return html;
             }
 
 
             // ============================================
-            // 월간 히트맵 렌더링 (30일)
+            // 전체 기간 월간 히트맵 렌더링 (일별, 스크롤 가능)
             // ============================================
             function renderMonthlyHeatmap(site, historyData) {
                 const chargerIds = site.chargers.map(c => c.charger_id).filter(id => id);
                 
-                // 최근 30일 날짜 생성
-                const days = [];
-                for (let i = 29; i >= 0; i--) {
-                    days.push(dayjs().subtract(i, 'day'));
+                if (!historyData || historyData.length === 0) {
+                    return '<div style="text-align: center; padding: 2rem; color: #aaa;">표시할 이력 데이터가 없습니다.</div>';
                 }
                 
-                // 일별 데이터 집계
+                // 1. 데이터에서 실제 날짜 범위 추출
+                const dateSet = new Set();
+                const normalizedHistory = historyData.map(record => {
+                    let time = dayjs(record.collected_at);
+                    if (!time.format('Z') || time.format('Z') === '+00:00') {
+                        time = time.add(9, 'hour');
+                    }
+                    const dateKey = time.format('YYYY-MM-DD');
+                    dateSet.add(dateKey);
+                    return { ...record, kst_time: time, dateKey };
+                });
+                
+                // 2. 전체 기간 날짜 리스트 생성
+                const days = Array.from(dateSet).sort().map(d => dayjs(d));
+                
+                // 3. 일별 데이터 집계
                 const dailyDataMap = new Map();
-                historyData.forEach(record => {
-                    const dateKey = dayjs(record.collected_at).format('YYYY-MM-DD');
-                    const key = `${record.charger_id}_${dateKey}`;
-                    
+                normalizedHistory.forEach(record => {
+                    const key = `${record.charger_id}_${record.dateKey}`;
                     if (!dailyDataMap.has(key)) {
                         dailyDataMap.set(key, []);
                     }
@@ -1077,19 +1128,46 @@
                 });
                 
                 let html = `
-                    <div class="heatmap-container">
+                    <div style="margin-bottom: 1rem; padding: 1rem; background: #1e1e1e; border-radius: 6px;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                            <div>
+                                <div style="font-size: 0.8rem; color: #888;">📅 전체 데이터 기간</div>
+                                <div style="font-size: 1.1rem; font-weight: bold; color: #4a9eff;">
+                                    ${days.length > 0 ? `${days[0].format('YYYY-MM-DD')} ~ ${days[days.length - 1].format('YYYY-MM-DD')}` : '-'}
+                                </div>
+                                <div style="font-size: 0.75rem; color: #aaa; margin-top: 0.25rem;">
+                                    총 ${days.length}일 (약 ${(days.length / 30).toFixed(1)}개월)
+                                </div>
+                            </div>
+                            <div>
+                                <div style="font-size: 0.8rem; color: #888;">📊 전체 레코드</div>
+                                <div style="font-size: 1.1rem; font-weight: bold; color: #00ff7f;">
+                                    ${historyData.length.toLocaleString()}개
+                                </div>
+                                <div style="font-size: 0.75rem; color: #aaa; margin-top: 0.25rem;">
+                                    ${chargerIds.length}대 충전기 데이터
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 0.5rem; font-size: 0.85rem; color: #888;">
+                        💡 각 셀은 해당 일자의 대표 상태 | 우선순위: 에러 > 충전 > 대기
+                    </div>
+                    
+                    <div class="heatmap-container" id="monthly-scroll-container">
                         <table class="heatmap-table">
                             <thead>
                                 <tr>
                                     <th class="charger-header">충전기ID</th>
                 `;
                 
-                // 날짜 헤더 (간격을 두고 표시)
+                // 날짜 헤더
                 days.forEach((day, index) => {
-                    if (index % 2 === 0) { // 2일마다 표시
-                        html += `<th>${day.format('MM/DD')}<br><span style="font-size:0.7rem;">${day.format('ddd')}</span></th>`;
+                    if (index % 7 === 0) { // 주차별로 구분
+                        html += `<th style="min-width: 40px; border-left: 1px solid #4a9eff;">${day.format('MM/DD')}<br><span style="font-size:0.7rem;">${day.format('ddd')}</span></th>`;
                     } else {
-                        html += `<th style="font-size:0.7rem;">${day.format('DD')}</th>`;
+                        html += `<th style="min-width: 35px;">${day.format('DD')}<br><span style="font-size:0.6rem;">${day.format('ddd')}</span></th>`;
                     }
                 });
                 
@@ -1103,20 +1181,21 @@
                 chargerIds.forEach(chargerId => {
                     html += `<tr><td class="charger-label">${chargerId}</td>`;
                     
-                    days.forEach(day => {
+                    days.forEach((day, index) => {
                         const dateKey = day.format('YYYY-MM-DD');
                         const key = `${chargerId}_${dateKey}`;
                         const dayRecords = dailyDataMap.get(key) || [];
                         
+                        const borderStyle = index % 7 === 0 ? 'border-left: 1px solid #4a9eff;' : '';
+                        
                         if (dayRecords.length > 0) {
-                            // 하루 중 가장 중요한 상태 결정 (우선순위: 에러 > 충전 > 대기)
                             const statusSummary = summarizeDayStatus(dayRecords);
                             const cellClass = getHeatmapCellClass(statusSummary.status, statusSummary.error);
                             const emoji = getStatusEmoji(statusSummary.status, statusSummary.error);
                             const tooltipText = `${chargerId}\\n${day.format('MM/DD (ddd)')}\\n${statusSummary.description}\\n${dayRecords.length}회 수집`;
                             
                             html += `
-                                <td>
+                                <td style="${borderStyle}">
                                     <div class="heatmap-cell ${cellClass}" 
                                          onmouseover="showTooltip(event, '${tooltipText}')"
                                          onmouseout="hideTooltip()">
@@ -1125,7 +1204,16 @@
                                 </td>
                             `;
                         } else {
-                            html += `<td><div class="heatmap-cell cell-empty">-</div></td>`;
+                            const tooltipText = `${chargerId}\\n${day.format('MM/DD (ddd)')}\\n데이터 없음`;
+                            html += `
+                                <td style="${borderStyle}">
+                                    <div class="heatmap-cell cell-empty" 
+                                         onmouseover="showTooltip(event, '${tooltipText}')"
+                                         onmouseout="hideTooltip()">
+                                        -
+                                    </div>
+                                </td>
+                            `;
                         }
                     });
                     
@@ -1136,13 +1224,19 @@
                             </tbody>
                         </table>
                     </div>
-                    <div style="font-size: 0.85rem; color: #888; margin-top: 0.5rem;">
-                        💡 각 셀은 해당 일자의 대표 상태를 표시합니다. 우선순위: 에러 > 충전 > 대기
-                    </div>
                 `;
+                
+                // 스크롤을 오른쪽 끝(최신)으로 자동 이동
+                setTimeout(() => {
+                    const container = document.getElementById('monthly-scroll-container');
+                    if (container) {
+                        container.scrollLeft = container.scrollWidth - container.clientWidth;
+                    }
+                }, 100);
                 
                 return html;
             }
+
 
             // ============================================
             // 유틸리티 함수들 (완전 교체)
