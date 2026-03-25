@@ -347,7 +347,16 @@
                 충전소명, 주소, 사이트명 등으로 검색하세요.
             </p>
             
+            
+
             <input type="text" id="search-input" class="search-input" placeholder="예: 서울 아파트, 노원 에버온...">
+            <!-- 검색 입력창 아래에 추가 -->
+            <div class="grouping-option" style="margin: 1rem 0; padding: 0.75rem; background: #1e1e1e; border-radius: 6px; border: 1px solid #3a3a3a;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.85rem; color: #aaa;">
+                    <input type="checkbox" id="group-by-site" checked style="width: 18px; height: 18px;">
+                    <span>같은 사이트 통합 (아파트 단지 전체 보기)</span>
+                </label>
+            </div>
             <button id="search-btn" class="search-btn">🔍 검색</button>
             
             <div id="search-summary" style="display: none; margin-top: 1rem; padding: 0.8rem; background: #1a2e1a; border-radius: 6px; border: 1px solid #00ff7f; font-size: 0.85rem;"></div>
@@ -544,7 +553,12 @@
                         return;
                     }
                     
-                    const siteGroups = groupBySite(uniqueChargers);
+                    const groupBySite = document.getElementById('group-by-site').checked;
+    
+                    const siteGroups = groupBySite ? 
+                    groupBySiteUnified(uniqueChargers) :  // 통합 모드 (74대 전체)
+                    groupByStationSeparate(uniqueChargers); // 분리 모드 (충전소별)
+                    
                     window.APP_STATE.searchResults = siteGroups;
                     
                     searchSummary.innerHTML = `
@@ -572,11 +586,42 @@
                 }
             }
 
-            function groupBySite(data) {
+            // 통합 그룹화 (아파트 전체)
+            function groupBySiteUnified(data) {
                 const groups = new Map();
                 
                 data.forEach(row => {
-                    const key = row.site_id || row.station_id || 'unknown';
+                    const key = row.site_id || 
+                               `${row.station_name || 'unknown'}_${(row.address1 || '').split(' ').slice(0,2).join('')}`;
+                    
+                    if (!groups.has(key)) {
+                        groups.set(key, {
+                            key: key,
+                            station_name: row.station_name || '',
+                            address: row.address1 || '',
+                            site_id: row.site_id,
+                            station_id: 'Multiple',
+                            count: 0,
+                            chargers: [],
+                            stationIds: new Set()
+                        });
+                    }
+                    
+                    const group = groups.get(key);
+                    group.count++;
+                    group.chargers.push(row);
+                    if (row.station_id) group.stationIds.add(row.station_id);
+                });
+                
+                return Array.from(groups.values()).sort((a, b) => b.count - a.count);
+            }
+            
+            // 분리 그룹화 (충전소별)
+            function groupByStationSeparate(data) {
+                const groups = new Map();
+                
+                data.forEach(row => {
+                    const key = row.station_id || row.site_id || 'unknown';
                     
                     if (!groups.has(key)) {
                         groups.set(key, {
@@ -597,6 +642,60 @@
                 
                 return Array.from(groups.values()).sort((a, b) => b.count - a.count);
             }
+
+            function groupBySite(data) {
+            const groups = new Map();
+            
+            data.forEach(row => {
+                // ⚡ 핵심 변경: 그룹화 우선순위 개선
+                let key;
+                
+                if (row.site_id && row.site_id !== 'null' && row.site_id !== 'undefined') {
+                    // 1순위: site_id가 있으면 그것을 기준으로 묶음
+                    key = `SITE_${row.site_id}`;
+                } else if (row.station_name) {
+                    // 2순위: 충전소명이 같으면 같은 사이트로 간주 (주소 앞부분도 포함하여 동명이인 방지)
+                    const addr = (row.address1 || '').split(' ').slice(0, 2).join('');
+                    key = `NAME_${row.station_name}_${addr}`;
+                } else {
+                    // 3순위: 마지막 수단으로 station_id 사용
+                    key = `STATION_${row.station_id || 'unknown'}`;
+                }
+                
+                if (!groups.has(key)) {
+                    groups.set(key, {
+                        key: key,
+                        station_name: row.station_name || '',
+                        address: row.address1 || '',
+                        site_id: row.site_id,
+                        station_id: row.station_id,
+                        station_ids: new Set(), // 포함된 station_id들 추적
+                        count: 0,
+                        chargers: []
+                    });
+                }
+                
+                const group = groups.get(key);
+                group.count++;
+                group.chargers.push(row);
+                if (row.station_id) {
+                    group.station_ids.add(row.station_id);
+                }
+            });
+            
+            // station_id 표시 정보 정리
+            groups.forEach(group => {
+                const stationCount = group.station_ids.size;
+                if (stationCount > 1) {
+                    group.station_id = `${stationCount}개 충전소 통합`;
+                } else if (stationCount === 1) {
+                    group.station_id = Array.from(group.station_ids)[0];
+                }
+            });
+            
+            return Array.from(groups.values()).sort((a, b) => b.count - a.count);
+        }
+
 
             function renderSiteTable(siteGroups) {
                 const dashboardArea = document.getElementById('dashboard-area');
