@@ -1081,69 +1081,199 @@
             }
 
             // ============================================
-            // 유틸리티 함수들
+            // 유틸리티 함수들 (완전 교체)
             // ============================================
+            
+            // 에러 상태 판별 헬퍼 함수
+            function isRealError(errorState) {
+                if (!errorState) return false; // null, undefined, "" 모두 정상
+                
+                const normalized = String(errorState).trim().toLowerCase();
+                
+                // 정상으로 간주할 값들
+                const normalValues = ['0', '00', '000', '0000', 'none', 'null', 'ok', '정상', '이상없음'];
+                
+                return !normalValues.includes(normalized);
+            }
+            
             function getStatusClass(status, errorState) {
-                if (errorState && errorState !== '0' && errorState !== 'None' && errorState !== 'null') {
+                // 1순위: 진짜 에러 체크
+                if (isRealError(errorState)) {
+                    console.log(`🔴 에러 감지: ${errorState}`);
                     return 'status-maintenance';
                 }
-                if (!status) return 'status-offline';
                 
-                const s = status.toLowerCase();
-                if (s.includes('충전중') || s.includes('충전완료')) return 'status-charging';
-                if (s.includes('고장') || s.includes('점검')) return 'status-maintenance';
-                if (s.includes('미수신') || s.includes('통신')) return 'status-offline';
-                if (s.includes('경고')) return 'status-warning';
+                // 2순위: 상태 값 체크
+                if (!status || status === 'null' || status === 'None') {
+                    return 'status-offline';
+                }
                 
+                const s = String(status).toLowerCase();
+                
+                // 충전 관련 상태 (파란색)
+                if (s.includes('충전중') || s.includes('충전완료') || s.includes('charging')) {
+                    console.log(`🔵 충전 상태: ${status}`);
+                    return 'status-charging';
+                }
+                
+                // 고장/점검 상태 (빨간색)
+                if (s.includes('고장') || s.includes('점검') || s.includes('error') || s.includes('fault')) {
+                    console.log(`🔴 점검 상태: ${status}`);
+                    return 'status-maintenance';
+                }
+                
+                // 통신 두절 (회색)
+                if (s.includes('미수신') || s.includes('통신') || s.includes('offline')) {
+                    console.log(`⚫ 오프라인: ${status}`);
+                    return 'status-offline';
+                }
+                
+                // 경고 상태 (노란색)
+                if (s.includes('경고') || s.includes('warning')) {
+                    console.log(`🟡 경고: ${status}`);
+                    return 'status-warning';
+                }
+                
+                // 대기 상태 (녹색) - 기본값
+                console.log(`🟢 대기 상태: ${status}`);
                 return 'status-ready';
             }
-
+            
             function getHeatmapCellClass(status, errorState) {
-                if (errorState && errorState !== '0' && errorState !== 'None' && errorState !== 'null') {
+                // 1순위: 진짜 에러 체크
+                if (isRealError(errorState)) {
                     return 'cell-maintenance';
                 }
-                if (!status) return 'cell-offline';
                 
-                const s = status.toLowerCase();
-                if (s.includes('충전중') || s.includes('충전완료')) return 'cell-charging';
-                if (s.includes('고장') || s.includes('점검')) return 'cell-maintenance';
-                if (s.includes('미수신') || s.includes('통신')) return 'cell-offline';
-                if (s.includes('경고')) return 'cell-warning';
+                // 2순위: 상태 값 체크
+                if (!status || status === 'null' || status === 'None') {
+                    return 'cell-offline';
+                }
                 
+                const s = String(status).toLowerCase();
+                
+                // 충전 관련 상태
+                if (s.includes('충전중') || s.includes('충전완료') || s.includes('charging')) {
+                    return 'cell-charging';
+                }
+                
+                // 고장/점검 상태
+                if (s.includes('고장') || s.includes('점검') || s.includes('error') || s.includes('fault')) {
+                    return 'cell-maintenance';
+                }
+                
+                // 통신 두절
+                if (s.includes('미수신') || s.includes('통신') || s.includes('offline')) {
+                    return 'cell-offline';
+                }
+                
+                // 경고 상태
+                if (s.includes('경고') || s.includes('warning')) {
+                    return 'cell-warning';
+                }
+                
+                // 대기 상태 (기본값)
                 return 'cell-ready';
             }
-
+            
             function getStatusEmoji(status, errorState) {
-                if (errorState && errorState !== '0' && errorState !== 'None' && errorState !== 'null') {
+                // 1순위: 진짜 에러 체크
+                if (isRealError(errorState)) {
                     return '⚠';
                 }
-                if (!status) return '○';
                 
-                const s = status.toLowerCase();
-                if (s.includes('충전중') || s.includes('충전완료')) return '⚡';
-                if (s.includes('고장') || s.includes('점검')) return '⚠';
-                if (s.includes('미수신') || s.includes('통신')) return '○';
-                if (s.includes('경고')) return '⚠';
+                // 2순위: 상태 값 체크
+                if (!status || status === 'null' || status === 'None') {
+                    return '○';
+                }
                 
+                const s = String(status).toLowerCase();
+                
+                if (s.includes('충전중') || s.includes('충전완료') || s.includes('charging')) {
+                    return '⚡';
+                }
+                if (s.includes('고장') || s.includes('점검') || s.includes('error') || s.includes('fault')) {
+                    return '⚠';
+                }
+                if (s.includes('미수신') || s.includes('통신') || s.includes('offline')) {
+                    return '○';
+                }
+                if (s.includes('경고') || s.includes('warning')) {
+                    return '⚠';
+                }
+                
+                // 기본값: 대기
                 return '✓';
             }
-
+            
             function summarizeDayStatus(dayRecords) {
-                // 에러 상태가 하나라도 있으면 에러로 분류
-                const hasError = dayRecords.some(r => r.error_state && r.error_state !== '0' && r.error_state !== 'None' && r.error_state !== 'null');
-                if (hasError) {
-                    return { status: '고장', error: '1', description: '에러 발생' };
+                if (!dayRecords || dayRecords.length === 0) {
+                    return { status: null, error: null, description: '데이터 없음' };
                 }
                 
-                // 충전 이력이 있으면 충전으로 분류
-                const hasCharging = dayRecords.some(r => r.status && (r.status.includes('충전중') || r.status.includes('충전완료')));
-                if (hasCharging) {
-                    return { status: '충전중', error: null, description: '충전 활동' };
+                // 1순위: 진짜 에러가 하나라도 있으면 에러로 분류
+                const errorRecord = dayRecords.find(r => isRealError(r.error_state));
+                if (errorRecord) {
+                    return { 
+                        status: '고장', 
+                        error: errorRecord.error_state, 
+                        description: `에러 발생` 
+                    };
                 }
                 
-                // 그 외는 대기로 분류
-                return { status: '대기', error: null, description: '정상 대기' };
+                // 2순위: 충전 이력이 있으면 충전으로 분류
+                const chargingRecord = dayRecords.find(r => {
+                    if (!r.status) return false;
+                    const s = r.status.toLowerCase();
+                    return s.includes('충전중') || s.includes('충전완료') || s.includes('charging');
+                });
+                
+                if (chargingRecord) {
+                    return { 
+                        status: '충전중', 
+                        error: null, 
+                        description: '충전 활동' 
+                    };
+                }
+                
+                // 3순위: 점검/고장 확인
+                const maintenanceRecord = dayRecords.find(r => {
+                    if (!r.status) return false;
+                    const s = r.status.toLowerCase();
+                    return s.includes('고장') || s.includes('점검') || s.includes('error');
+                });
+                
+                if (maintenanceRecord) {
+                    return { 
+                        status: '점검중', 
+                        error: null, 
+                        description: '점검 중' 
+                    };
+                }
+                
+                // 4순위: 통신 두절 (하루 종일 미수신인 경우)
+                const allOffline = dayRecords.every(r => {
+                    if (!r.status) return true;
+                    const s = r.status.toLowerCase();
+                    return s.includes('미수신') || s.includes('통신') || s.includes('offline');
+                });
+                
+                if (allOffline) {
+                    return { 
+                        status: '미수신', 
+                        error: null, 
+                        description: '통신 장애' 
+                    };
+                }
+                
+                // 기본값: 정상 대기
+                return { 
+                    status: '대기', 
+                    error: null, 
+                    description: '정상 대기' 
+                };
             }
+
 
             // ============================================
             // 전역 함수들
