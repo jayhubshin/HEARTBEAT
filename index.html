@@ -141,7 +141,7 @@
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         
-        /* 히트맵 컨테이너 (가로 스크롤 최적화) */
+        /* 히트맵 컨테이너 */
         .heatmap-container {
             background: #262730;
             border-radius: 8px;
@@ -152,7 +152,6 @@
             position: relative;
         }
         
-        /* 스크롤바 스타일링 */
         .heatmap-container::-webkit-scrollbar {
             height: 10px;
         }
@@ -190,7 +189,6 @@
             z-index: 5;
         }
         
-        /* 충전기 ID 컬럼 고정 (스크롤 시에도 보이도록) */
         .heatmap-table th.charger-header,
         .heatmap-table td.charger-label {
             position: sticky;
@@ -201,7 +199,7 @@
         }
         
         .heatmap-table th.charger-header {
-            z-index: 11; /* 헤더가 더 위에 */
+            z-index: 11;
         }
         
         .heatmap-cell {
@@ -307,17 +305,18 @@
         
         /* 툴팁 */
         .tooltip {
-            position: absolute;
+            position: fixed;
             background: rgba(0,0,0,0.9);
             color: white;
             padding: 0.5rem 0.75rem;
             border-radius: 4px;
             font-size: 0.75rem;
             pointer-events: none;
-            z-index: 1000;
+            z-index: 9999;
             display: none;
             white-space: nowrap;
             box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            border: 1px solid #444;
         }
         
         .loading { text-align: center; padding: 3rem; color: #aaa; font-size: 1.1rem; }
@@ -384,6 +383,35 @@
     <div id="tooltip" class="tooltip"></div>
 
     <script>
+        // ============================================
+        // 전역 상태 및 유틸리티 (스코프 문제 해결)
+        // ============================================
+        window.APP_STATE = {
+            supabaseClient: null,
+            dbLastTime: null,
+            searchResults: [],
+            selectedSite: null,
+            historyData: []
+        };
+
+        // XSS 방지를 위한 텍스트 이스케이프 함수
+        function escapeTooltipText(str) {
+            return String(str)
+                .replace(/\\/g, '\\\\')
+                .replace(/'/g, '\\\'')
+                .replace(/"/g, '&quot;')
+                .replace(/\r?\n/g, '\\n');
+        }
+
+        // UTC → KST 변환 헬퍼 (타임존 처리 통합)
+        function toKST(dateString) {
+            let time = dayjs(dateString);
+            if (!time.format('Z') || time.format('Z') === '+00:00') {
+                time = time.add(9, 'hour');
+            }
+            return time;
+        }
+
         (function() {
             'use strict';
             
@@ -392,14 +420,6 @@
                 return;
             }
             window.HEARTBEAT_INITIALIZED = true;
-
-            const APP_STATE = {
-                supabaseClient: null,
-                dbLastTime: null,
-                searchResults: [],
-                selectedSite: null,
-                historyData: []
-            };
 
             // ============================================
             // 초기화
@@ -425,14 +445,14 @@
                     const SUPABASE_URL = "https://gkwtucqymzkvpurcpihk.supabase.co";
                     const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdrd3R1Y3F5bXprdnB1cmNwaWhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MDIxNDcsImV4cCI6MjA4OTQ3ODE0N30.V0FnaZ-BaTEYUOKfzxvQ-T4Qk4E83LNIi4GflQsURUg";
                     
-                    APP_STATE.supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+                    window.APP_STATE.supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                     
                     statusDiv.textContent = "✅ 연결 성공";
                     statusDiv.className = "connection-info connection-success";
                     
                     const currentTime = dayjs();
                     dbTimeDiv.textContent = `🕒 ${currentTime.format('YYYY-MM-DD HH:mm')}`;
-                    APP_STATE.dbLastTime = currentTime;
+                    window.APP_STATE.dbLastTime = currentTime;
                     
                     console.log('✅ HEARTBEAT 초기화 완료');
                     
@@ -447,111 +467,110 @@
             // 검색 함수
             // ============================================
             async function performSearch() {
-            const keyword = document.getElementById('search-input').value.trim();
-            const dashboardArea = document.getElementById('dashboard-area');
-            const searchBtn = document.getElementById('search-btn');
-            const searchSummary = document.getElementById('search-summary');
-            const breadcrumb = document.getElementById('breadcrumb');
-            
-            if (!keyword) {
-                alert('검색어를 입력하세요');
-                return;
-            }
-            
-            if (!APP_STATE.supabaseClient) {
-                alert('데이터베이스가 연결되지 않았습니다');
-                return;
-            }
-            
-            searchBtn.disabled = true;
-            searchBtn.textContent = '검색 중...';
-            dashboardArea.innerHTML = '<div class="loading">🔄 검색 중...</div>';
-            searchSummary.style.display = 'none';
-            
-            try {
-                const tokens = keyword.split(/\s+/).filter(t => t.length > 0);
-                const primaryKeyword = tokens[0];
+                const keyword = document.getElementById('search-input').value.trim();
+                const dashboardArea = document.getElementById('dashboard-area');
+                const searchBtn = document.getElementById('search-btn');
+                const searchSummary = document.getElementById('search-summary');
+                const breadcrumb = document.getElementById('breadcrumb');
                 
-                const { data, error } = await APP_STATE.supabaseClient
-                    .from('charger_master')
-                    .select('*')
-                    .or(`station_name.ilike.%${primaryKeyword}%,address1.ilike.%${primaryKeyword}%,site_id.ilike.%${primaryKeyword}%,station_id.ilike.%${primaryKeyword}%`)
-                    .limit(500); // 중복 제거 전 충분한 데이터 확보
-                
-                if (error) throw error;
-                
-                if (!data || data.length === 0) {
-                    dashboardArea.innerHTML = `
-                        <div class="empty-state">
-                            <div class="empty-state-icon">😕</div>
-                            <h3>검색 결과가 없습니다</h3>
-                            <p>다른 검색어로 다시 시도해보세요.</p>
-                        </div>
-                    `;
+                if (!keyword) {
+                    alert('검색어를 입력하세요');
                     return;
                 }
                 
-                // 다중 키워드 필터링
-                let filteredData = data;
-                if (tokens.length > 1) {
-                    filteredData = data.filter(row => {
-                        const searchText = `${row.station_name || ''} ${row.address1 || ''}`.toLowerCase();
-                        return tokens.every(token => searchText.includes(token.toLowerCase()));
-                    });
+                if (!window.APP_STATE.supabaseClient) {
+                    alert('데이터베이스가 연결되지 않았습니다');
+                    return;
                 }
                 
-                // ⚡ 핵심: charger_id 기준으로 중복 제거
-                const uniqueChargers = [];
-                const seenChargerIds = new Set();
+                searchBtn.disabled = true;
+                searchBtn.textContent = '검색 중...';
+                dashboardArea.innerHTML = '<div class="loading">🔄 검색 중...</div>';
+                searchSummary.style.display = 'none';
                 
-                filteredData.forEach(item => {
-                    if (item.charger_id && !seenChargerIds.has(item.charger_id)) {
-                        seenChargerIds.add(item.charger_id);
-                        uniqueChargers.push(item);
+                try {
+                    const tokens = keyword.split(/\s+/).filter(t => t.length > 0);
+                    const primaryKeyword = tokens[0];
+                    
+                    const { data, error } = await window.APP_STATE.supabaseClient
+                        .from('charger_master')
+                        .select('*')
+                        .or(`station_name.ilike.%${primaryKeyword}%,address1.ilike.%${primaryKeyword}%,site_id.ilike.%${primaryKeyword}%,station_id.ilike.%${primaryKeyword}%`)
+                        .limit(500);
+                    
+                    if (error) throw error;
+                    
+                    if (!data || data.length === 0) {
+                        dashboardArea.innerHTML = `
+                            <div class="empty-state">
+                                <div class="empty-state-icon">😕</div>
+                                <h3>검색 결과가 없습니다</h3>
+                                <p>다른 검색어로 다시 시도해보세요.</p>
+                            </div>
+                        `;
+                        return;
                     }
-                });
-                
-                console.log(`🔍 검색 결과: 원본 ${data.length}개 → 필터링 ${filteredData.length}개 → 중복제거 ${uniqueChargers.length}개`);
-                
-                if (uniqueChargers.length === 0) {
-                    dashboardArea.innerHTML = `
-                        <div class="empty-state">
-                            <div class="empty-state-icon">😕</div>
-                            <h3>유효한 충전기가 없습니다</h3>
-                            <p>검색어를 조정해보세요.</p>
+                    
+                    // 다중 키워드 필터링
+                    let filteredData = data;
+                    if (tokens.length > 1) {
+                        filteredData = data.filter(row => {
+                            const searchText = `${row.station_name || ''} ${row.address1 || ''}`.toLowerCase();
+                            return tokens.every(token => searchText.includes(token.toLowerCase()));
+                        });
+                    }
+                    
+                    // charger_id 기준으로 중복 제거
+                    const uniqueChargers = [];
+                    const seenChargerIds = new Set();
+                    
+                    filteredData.forEach(item => {
+                        if (item.charger_id && !seenChargerIds.has(item.charger_id)) {
+                            seenChargerIds.add(item.charger_id);
+                            uniqueChargers.push(item);
+                        }
+                    });
+                    
+                    console.log(`🔍 검색 결과: 원본 ${data.length}개 → 필터링 ${filteredData.length}개 → 중복제거 ${uniqueChargers.length}개`);
+                    
+                    if (uniqueChargers.length === 0) {
+                        dashboardArea.innerHTML = `
+                            <div class="empty-state">
+                                <div class="empty-state-icon">😕</div>
+                                <h3>유효한 충전기가 없습니다</h3>
+                                <p>검색어를 조정해보세요.</p>
+                            </div>
+                        `;
+                        return;
+                    }
+                    
+                    const siteGroups = groupBySite(uniqueChargers);
+                    window.APP_STATE.searchResults = siteGroups;
+                    
+                    searchSummary.innerHTML = `
+                        <div style="color: #00ff7f;">
+                            <strong>✅ ${siteGroups.length}개 사이트</strong><br>
+                            <span style="font-size: 0.75rem; color: #aaa;">총 ${uniqueChargers.length}대 충전기</span>
                         </div>
                     `;
-                    return;
+                    searchSummary.style.display = 'block';
+                    
+                    renderSiteTable(siteGroups);
+                    breadcrumb.textContent = `홈 > 검색 결과 (${siteGroups.length}개 사이트)`;
+                    
+                } catch (error) {
+                    console.error('검색 오류:', error);
+                    dashboardArea.innerHTML = `
+                        <div style="padding: 2rem; background: #2d1a1a; border-radius: 8px; border: 1px solid #ff6b6b; color: #ff6b6b;">
+                            <h3>❌ 검색 오류</h3>
+                            <p>${error.message}</p>
+                        </div>
+                    `;
+                } finally {
+                    searchBtn.disabled = false;
+                    searchBtn.textContent = '🔍 검색';
                 }
-                
-                const siteGroups = groupBySite(uniqueChargers);
-                APP_STATE.searchResults = siteGroups;
-                
-                searchSummary.innerHTML = `
-                    <div style="color: #00ff7f;">
-                        <strong>✅ ${siteGroups.length}개 사이트</strong><br>
-                        <span style="font-size: 0.75rem; color: #aaa;">총 ${uniqueChargers.length}대 충전기</span>
-                    </div>
-                `;
-                searchSummary.style.display = 'block';
-                
-                renderSiteTable(siteGroups);
-                breadcrumb.textContent = `홈 > 검색 결과 (${siteGroups.length}개 사이트)`;
-                
-            } catch (error) {
-                console.error('검색 오류:', error);
-                dashboardArea.innerHTML = `
-                    <div style="padding: 2rem; background: #2d1a1a; border-radius: 8px; border: 1px solid #ff6b6b; color: #ff6b6b;">
-                        <h3>❌ 검색 오류</h3>
-                        <p>${error.message}</p>
-                    </div>
-                `;
-            } finally {
-                searchBtn.disabled = false;
-                searchBtn.textContent = '🔍 검색';
             }
-        }
-
 
             function groupBySite(data) {
                 const groups = new Map();
@@ -599,7 +618,7 @@
                 
                 siteGroups.forEach((group, index) => {
                     html += `
-                        <tr onclick="selectSite(${index})" data-site-index="${index}">
+                        <tr onclick="window.selectSite(${index})" data-site-index="${index}">
                             <td>${index + 1}</td>
                             <td><strong style="color: #4a9eff;">${group.station_name || group.key}</strong></td>
                             <td>${group.address || '-'}</td>
@@ -624,10 +643,10 @@
             // 사이트 선택 및 전체 이력 데이터 로딩
             // ============================================
             window.selectSite = async function(index) {
-                const site = APP_STATE.searchResults[index];
+                const site = window.APP_STATE.searchResults[index];
                 if (!site) return;
                 
-                APP_STATE.selectedSite = site;
+                window.APP_STATE.selectedSite = site;
                 
                 const dashboardArea = document.getElementById('dashboard-area');
                 const breadcrumb = document.getElementById('breadcrumb');
@@ -636,11 +655,14 @@
                 document.querySelectorAll('.table-container tbody tr').forEach(row => {
                     row.classList.remove('selected');
                 });
-                document.querySelector(`tr[data-site-index="${index}"]`)?.classList.add('selected');
+                const selectedRow = document.querySelector(`tr[data-site-index="${index}"]`);
+                if (selectedRow) {
+                    selectedRow.classList.add('selected');
+                }
                 
                 breadcrumb.textContent = `홈 > 검색 결과 > ${site.station_name || site.key}`;
                 
-                // 로딩 패널 표시
+                // 로딩 패널 표시 (수정된 문구)
                 showLoadingPanel(site);
                 
                 try {
@@ -653,15 +675,14 @@
                     
                     console.log(`📊 전체 기간 이력 조회 시작 (${chargerIds.length}개 충전기)`);
                     
-                    // ⚡ 핵심 변경: 날짜 제한(.gte) 제거하고 전체 데이터 조회
                     const historyPromises = chargerIds.map(async (chargerId) => {
                         try {
-                            const { data, error } = await APP_STATE.supabaseClient
+                            const { data, error } = await window.APP_STATE.supabaseClient
                                 .from('status_history')
                                 .select('*')
                                 .eq('charger_id', chargerId)
-                                .order('collected_at', { ascending: true }) // 시간순 정렬
-                                .limit(3000); // 충전기당 최대 3000개 레코드 (약 6개월~1년)
+                                .order('collected_at', { ascending: true })
+                                .limit(3000);
                             
                             if (error) {
                                 console.warn(`충전기 ${chargerId} 조회 실패:`, error.message);
@@ -674,7 +695,6 @@
                         }
                     });
                     
-                    // 25초 타임아웃 설정 (전체 데이터 조회이므로 시간 증가)
                     const timeoutPromise = new Promise((_, reject) => 
                         setTimeout(() => reject(new Error('데이터 로딩 시간 초과 (25초)')), 25000)
                     );
@@ -684,22 +704,20 @@
                         timeoutPromise
                     ]);
                     
-                    // 결과 병합 및 정렬
                     const allHistory = historyArrays.flat().sort((a, b) => 
                         new Date(a.collected_at) - new Date(b.collected_at)
                     );
                     
                     console.log(`✅ 총 ${allHistory.length}개 전체 이력 데이터 조회 완료`);
                     
-                    // 데이터 기간 정보 출력
                     if (allHistory.length > 0) {
-                        const firstDate = dayjs(allHistory[0].collected_at);
-                        const lastDate = dayjs(allHistory[allHistory.length - 1].collected_at);
+                        const firstDate = toKST(allHistory[0].collected_at);
+                        const lastDate = toKST(allHistory[allHistory.length - 1].collected_at);
                         const totalDays = lastDate.diff(firstDate, 'day') + 1;
                         console.log(`📅 데이터 기간: ${firstDate.format('YYYY-MM-DD')} ~ ${lastDate.format('YYYY-MM-DD')} (${totalDays}일)`);
                     }
                     
-                    APP_STATE.historyData = allHistory;
+                    window.APP_STATE.historyData = allHistory;
                     showHistoryPanel(site, allHistory);
                     
                 } catch (error) {
@@ -707,7 +725,6 @@
                     showHistoryPanel(site, [], error.message);
                 }
             };
-
 
             function showLoadingPanel(site) {
                 const dashboardArea = document.getElementById('dashboard-area');
@@ -721,12 +738,12 @@
                     <div class="detail-panel" style="display: block;">
                         <div class="detail-header">
                             <h3>🏢 ${site.station_name || site.key}</h3>
-                            <button class="close-btn" onclick="closeDetailPanel()">✖</button>
+                            <button class="close-btn" onclick="window.closeDetailPanel()">✖</button>
                         </div>
                         
                         <div class="loading">
                             <div style="font-size: 3rem; margin-bottom: 1rem;">⏳</div>
-                            <div>최근 30일 충전기 상태 이력 조회 중...</div>
+                            <div>전체 기간 충전기 상태 이력 조회 중 (최대 3000건/충전기)...</div>
                             <div style="font-size: 0.9rem; color: #888; margin-top: 1rem;">
                                 ${site.count}개 충전기 데이터를 병렬로 처리하고 있습니다.
                             </div>
@@ -752,7 +769,7 @@
                     <div class="detail-panel" style="display: block;">
                         <div class="detail-header">
                             <h3>🏢 ${site.station_name || site.key} 상태 이력 분석</h3>
-                            <button class="close-btn" onclick="closeDetailPanel()">✖</button>
+                            <button class="close-btn" onclick="window.closeDetailPanel()">✖</button>
                         </div>
                         
                         <div class="site-info-grid">
@@ -790,11 +807,11 @@
                         <div style="text-align: center; padding: 2rem; color: #aaa;">
                             <div style="font-size: 3rem; margin-bottom: 1rem;">📭</div>
                             <h4>상태 이력 데이터가 없습니다</h4>
-                            <p>이 사이트의 충전기들에 대한 최근 30일 이력이 없습니다.</p>
+                            <p>이 사이트의 충전기들에 대한 전체 기간 이력이 없습니다.</p>
                         </div>
                     `;
                 } else {
-                    // 범례 추가
+                    // 범례 및 탭 (수정된 라벨)
                     detailHtml += `
                         <div class="legend">
                             <div class="legend-item">
@@ -824,9 +841,9 @@
                         </div>
                         
                         <div class="tabs">
-                            <button class="tab active" onclick="switchTab('realtime')">🕒 실시간 이력</button>
-                            <button class="tab" onclick="switchTab('weekly')">📅 주간 히트맵 (7일)</button>
-                            <button class="tab" onclick="switchTab('monthly')">📆 월간 히트맵 (30일)</button>
+                            <button class="tab active" data-tab="realtime">🕒 실시간 이력</button>
+                            <button class="tab" data-tab="weekly">⏰ 3시간 간격 히트맵</button>
+                            <button class="tab" data-tab="monthly">📆 일별 히트맵</button>
                         </div>
                         
                         <div id="realtime-view" class="tab-content active">
@@ -847,6 +864,15 @@
                 
                 dashboardArea.insertAdjacentHTML('beforeend', detailHtml);
                 
+                // 탭 이벤트 리스너 등록 (이벤트 핸들러 문제 해결)
+                const tabs = dashboardArea.querySelectorAll('.tab');
+                tabs.forEach(tab => {
+                    tab.addEventListener('click', function(event) {
+                        const tabName = this.getAttribute('data-tab');
+                        window.switchTab(event, tabName);
+                    });
+                });
+                
                 const detailPanel = dashboardArea.querySelector('.detail-panel');
                 if (detailPanel) {
                     detailPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -861,7 +887,6 @@
                     return '<div style="text-align: center; padding: 2rem; color: #aaa;">표시할 이력 데이터가 없습니다.</div>';
                 }
                 
-                // 최근 100개 레코드만 표시
                 const recentData = historyData.slice(-100).reverse();
                 
                 let html = `
@@ -880,13 +905,13 @@
                 `;
                 
                 recentData.forEach(record => {
-                    const time = dayjs(record.collected_at).format('MM-DD HH:mm:ss');
+                    const time = toKST(record.collected_at).format('MM-DD HH:mm:ss');
                     const status = record.status || '-';
                     const errorState = record.error_state || '-';
                     const usage = record.usage || '-';
                     
                     const statusClass = getStatusClass(record.status, record.error_state);
-                    const errorStyle = (errorState !== '-' && errorState !== '0' && errorState !== 'None' && errorState !== 'null') 
+                    const errorStyle = isRealError(errorState)
                         ? 'color: #ff6b6b; font-weight: bold;' : 'color: #aaa;';
                     
                     html += `
@@ -913,7 +938,7 @@
             }
 
             // ============================================
-            // 전체 기간 주간 히트맵 렌더링 (3시간 단위, 스크롤 가능)
+            // 주간 히트맵 렌더링 (3시간 단위)
             // ============================================
             function renderWeeklyHeatmap(site, historyData) {
                 const chargerIds = site.chargers.map(c => c.charger_id).filter(id => id);
@@ -922,26 +947,17 @@
                     return '<div style="text-align: center; padding: 2rem; color: #aaa;">표시할 이력 데이터가 없습니다.</div>';
                 }
                 
-                // 1. 데이터에서 실제 날짜 범위 추출
                 const dateSet = new Set();
                 const normalizedHistory = historyData.map(record => {
-                    // UTC → KST 변환
-                    let time = dayjs(record.collected_at);
-                    if (!time.format('Z') || time.format('Z') === '+00:00') {
-                        time = time.add(9, 'hour');
-                    }
+                    const time = toKST(record.collected_at);
                     const dateKey = time.format('YYYY-MM-DD');
                     dateSet.add(dateKey);
                     return { ...record, kst_time: time, dateKey };
                 });
                 
-                // 2. 전체 기간 날짜 리스트 생성 (정렬)
                 const days = Array.from(dateSet).sort().map(d => dayjs(d));
-                
-                // 3. 3시간 간격 시간대
                 const timeSlots = ['00', '03', '06', '09', '12', '15', '18', '21'];
                 
-                // 4. 데이터 매핑
                 const dataMap = new Map();
                 const slotDistribution = {};
                 timeSlots.forEach(slot => slotDistribution[slot] = 0);
@@ -954,13 +970,11 @@
                     const hourSlotStr = hourSlot.toString().padStart(2, '0');
                     const key = `${record.charger_id}_${dateKey}_${hourSlotStr}`;
                     
-                    // 같은 슬롯에 여러 데이터가 있으면 최신 것 사용
                     if (!dataMap.has(key) || time.isAfter(dataMap.get(key).kst_time)) {
                         dataMap.set(key, record);
                     }
                 });
                 
-                // 시간대별 분포 계산
                 dataMap.forEach((record, key) => {
                     const slot = key.split('_')[2];
                     if (slotDistribution[slot] !== undefined) {
@@ -1018,7 +1032,6 @@
                                     <th class="charger-header">충전기ID</th>
                 `;
                 
-                // 날짜별 시간대 헤더
                 days.forEach(day => {
                     timeSlots.forEach(hour => {
                         html += `<th style="min-width: 45px;">${day.format('MM/DD')}<br><span style="font-size:0.7rem;">${hour}시</span></th>`;
@@ -1031,7 +1044,6 @@
                             <tbody>
                 `;
                 
-                // 각 충전기별 행 생성
                 chargerIds.forEach(chargerId => {
                     html += `<tr><td class="charger-label">${chargerId}</td>`;
                     
@@ -1045,24 +1057,26 @@
                                 const cellClass = getHeatmapCellClass(record.status, record.error_state);
                                 const emoji = getStatusEmoji(record.status, record.error_state);
                                 const time = record.kst_time;
-                                const tooltipText = `${chargerId}\\n${day.format('MM/DD')} ${hour}시\\n실제: ${time.format('HH:mm')}\\n상태: ${record.status || '-'}${isRealError(record.error_state) ? '\\n⚠ ' + record.error_state : ''}`;
+                                const rawTooltipText = `${chargerId}\n${day.format('MM/DD')} ${hour}시\n실제: ${time.format('HH:mm')}\n상태: ${record.status || '-'}${isRealError(record.error_state) ? '\n⚠ ' + record.error_state : ''}`;
+                                const tooltipText = escapeTooltipText(rawTooltipText);
                                 
                                 html += `
                                     <td>
                                         <div class="heatmap-cell ${cellClass}" 
-                                             onmouseover="showTooltip(event, '${tooltipText}')"
-                                             onmouseout="hideTooltip()">
+                                             onmouseover="window.showTooltip(event, '${tooltipText}')"
+                                             onmouseout="window.hideTooltip()">
                                             ${emoji}
                                         </div>
                                     </td>
                                 `;
                             } else {
-                                const tooltipText = `${chargerId}\\n${day.format('MM/DD')} ${hour}시\\n데이터 없음`;
+                                const rawTooltipText = `${chargerId}\n${day.format('MM/DD')} ${hour}시\n데이터 없음`;
+                                const tooltipText = escapeTooltipText(rawTooltipText);
                                 html += `
                                     <td>
                                         <div class="heatmap-cell cell-empty" 
-                                             onmouseover="showTooltip(event, '${tooltipText}')"
-                                             onmouseout="hideTooltip()">
+                                             onmouseover="window.showTooltip(event, '${tooltipText}')"
+                                             onmouseout="window.hideTooltip()">
                                             -
                                         </div>
                                     </td>
@@ -1080,7 +1094,6 @@
                     </div>
                 `;
                 
-                // 스크롤을 오른쪽 끝(최신 데이터)으로 자동 이동
                 setTimeout(() => {
                     const container = document.getElementById('weekly-scroll-container');
                     if (container) {
@@ -1091,9 +1104,8 @@
                 return html;
             }
 
-
             // ============================================
-            // 전체 기간 월간 히트맵 렌더링 (일별, 스크롤 가능)
+            // 월간 히트맵 렌더링 (일별)
             // ============================================
             function renderMonthlyHeatmap(site, historyData) {
                 const chargerIds = site.chargers.map(c => c.charger_id).filter(id => id);
@@ -1102,22 +1114,16 @@
                     return '<div style="text-align: center; padding: 2rem; color: #aaa;">표시할 이력 데이터가 없습니다.</div>';
                 }
                 
-                // 1. 데이터에서 실제 날짜 범위 추출
                 const dateSet = new Set();
                 const normalizedHistory = historyData.map(record => {
-                    let time = dayjs(record.collected_at);
-                    if (!time.format('Z') || time.format('Z') === '+00:00') {
-                        time = time.add(9, 'hour');
-                    }
+                    const time = toKST(record.collected_at);
                     const dateKey = time.format('YYYY-MM-DD');
                     dateSet.add(dateKey);
                     return { ...record, kst_time: time, dateKey };
                 });
                 
-                // 2. 전체 기간 날짜 리스트 생성
                 const days = Array.from(dateSet).sort().map(d => dayjs(d));
                 
-                // 3. 일별 데이터 집계
                 const dailyDataMap = new Map();
                 normalizedHistory.forEach(record => {
                     const key = `${record.charger_id}_${record.dateKey}`;
@@ -1162,9 +1168,8 @@
                                     <th class="charger-header">충전기ID</th>
                 `;
                 
-                // 날짜 헤더
                 days.forEach((day, index) => {
-                    if (index % 7 === 0) { // 주차별로 구분
+                    if (index % 7 === 0) {
                         html += `<th style="min-width: 40px; border-left: 1px solid #4a9eff;">${day.format('MM/DD')}<br><span style="font-size:0.7rem;">${day.format('ddd')}</span></th>`;
                     } else {
                         html += `<th style="min-width: 35px;">${day.format('DD')}<br><span style="font-size:0.6rem;">${day.format('ddd')}</span></th>`;
@@ -1177,7 +1182,6 @@
                             <tbody>
                 `;
                 
-                // 각 충전기별 행 생성
                 chargerIds.forEach(chargerId => {
                     html += `<tr><td class="charger-label">${chargerId}</td>`;
                     
@@ -1192,24 +1196,26 @@
                             const statusSummary = summarizeDayStatus(dayRecords);
                             const cellClass = getHeatmapCellClass(statusSummary.status, statusSummary.error);
                             const emoji = getStatusEmoji(statusSummary.status, statusSummary.error);
-                            const tooltipText = `${chargerId}\\n${day.format('MM/DD (ddd)')}\\n${statusSummary.description}\\n${dayRecords.length}회 수집`;
+                            const rawTooltipText = `${chargerId}\n${day.format('MM/DD (ddd)')}\n${statusSummary.description}\n${dayRecords.length}회 수집`;
+                            const tooltipText = escapeTooltipText(rawTooltipText);
                             
                             html += `
                                 <td style="${borderStyle}">
                                     <div class="heatmap-cell ${cellClass}" 
-                                         onmouseover="showTooltip(event, '${tooltipText}')"
-                                         onmouseout="hideTooltip()">
+                                         onmouseover="window.showTooltip(event, '${tooltipText}')"
+                                         onmouseout="window.hideTooltip()">
                                         ${emoji}
                                     </div>
                                 </td>
                             `;
                         } else {
-                            const tooltipText = `${chargerId}\\n${day.format('MM/DD (ddd)')}\\n데이터 없음`;
+                            const rawTooltipText = `${chargerId}\n${day.format('MM/DD (ddd)')}\n데이터 없음`;
+                            const tooltipText = escapeTooltipText(rawTooltipText);
                             html += `
                                 <td style="${borderStyle}">
                                     <div class="heatmap-cell cell-empty" 
-                                         onmouseover="showTooltip(event, '${tooltipText}')"
-                                         onmouseout="hideTooltip()">
+                                         onmouseover="window.showTooltip(event, '${tooltipText}')"
+                                         onmouseout="window.hideTooltip()">
                                         -
                                     </div>
                                 </td>
@@ -1226,7 +1232,6 @@
                     </div>
                 `;
                 
-                // 스크롤을 오른쪽 끝(최신)으로 자동 이동
                 setTimeout(() => {
                     const container = document.getElementById('monthly-scroll-container');
                     if (container) {
@@ -1237,110 +1242,83 @@
                 return html;
             }
 
-
             // ============================================
-            // 유틸리티 함수들 (완전 교체)
+            // 유틸리티 함수들
             // ============================================
-            
-            // 에러 상태 판별 헬퍼 함수
             function isRealError(errorState) {
-                if (!errorState) return false; // null, undefined, "" 모두 정상
+                if (!errorState) return false;
                 
                 const normalized = String(errorState).trim().toLowerCase();
-                
-                // 정상으로 간주할 값들
                 const normalValues = ['0', '00', '000', '0000', 'none', 'null', 'ok', '정상', '이상없음'];
                 
                 return !normalValues.includes(normalized);
             }
             
             function getStatusClass(status, errorState) {
-                // 1순위: 진짜 에러 체크
                 if (isRealError(errorState)) {
-                    console.log(`🔴 에러 감지: ${errorState}`);
                     return 'status-maintenance';
                 }
                 
-                // 2순위: 상태 값 체크
                 if (!status || status === 'null' || status === 'None') {
                     return 'status-offline';
                 }
                 
                 const s = String(status).toLowerCase();
                 
-                // 충전 관련 상태 (파란색)
                 if (s.includes('충전중') || s.includes('충전완료') || s.includes('charging')) {
-                    console.log(`🔵 충전 상태: ${status}`);
                     return 'status-charging';
                 }
                 
-                // 고장/점검 상태 (빨간색)
                 if (s.includes('고장') || s.includes('점검') || s.includes('error') || s.includes('fault')) {
-                    console.log(`🔴 점검 상태: ${status}`);
                     return 'status-maintenance';
                 }
                 
-                // 통신 두절 (회색)
                 if (s.includes('미수신') || s.includes('통신') || s.includes('offline')) {
-                    console.log(`⚫ 오프라인: ${status}`);
                     return 'status-offline';
                 }
                 
-                // 경고 상태 (노란색)
                 if (s.includes('경고') || s.includes('warning')) {
-                    console.log(`🟡 경고: ${status}`);
                     return 'status-warning';
                 }
                 
-                // 대기 상태 (녹색) - 기본값
-                console.log(`🟢 대기 상태: ${status}`);
                 return 'status-ready';
             }
             
             function getHeatmapCellClass(status, errorState) {
-                // 1순위: 진짜 에러 체크
                 if (isRealError(errorState)) {
                     return 'cell-maintenance';
                 }
                 
-                // 2순위: 상태 값 체크
                 if (!status || status === 'null' || status === 'None') {
                     return 'cell-offline';
                 }
                 
                 const s = String(status).toLowerCase();
                 
-                // 충전 관련 상태
                 if (s.includes('충전중') || s.includes('충전완료') || s.includes('charging')) {
                     return 'cell-charging';
                 }
                 
-                // 고장/점검 상태
                 if (s.includes('고장') || s.includes('점검') || s.includes('error') || s.includes('fault')) {
                     return 'cell-maintenance';
                 }
                 
-                // 통신 두절
                 if (s.includes('미수신') || s.includes('통신') || s.includes('offline')) {
                     return 'cell-offline';
                 }
                 
-                // 경고 상태
                 if (s.includes('경고') || s.includes('warning')) {
                     return 'cell-warning';
                 }
                 
-                // 대기 상태 (기본값)
                 return 'cell-ready';
             }
             
             function getStatusEmoji(status, errorState) {
-                // 1순위: 진짜 에러 체크
                 if (isRealError(errorState)) {
                     return '⚠';
                 }
                 
-                // 2순위: 상태 값 체크
                 if (!status || status === 'null' || status === 'None') {
                     return '○';
                 }
@@ -1360,7 +1338,6 @@
                     return '⚠';
                 }
                 
-                // 기본값: 대기
                 return '✓';
             }
             
@@ -1369,7 +1346,6 @@
                     return { status: null, error: null, description: '데이터 없음' };
                 }
                 
-                // 1순위: 진짜 에러가 하나라도 있으면 에러로 분류
                 const errorRecord = dayRecords.find(r => isRealError(r.error_state));
                 if (errorRecord) {
                     return { 
@@ -1379,7 +1355,6 @@
                     };
                 }
                 
-                // 2순위: 충전 이력이 있으면 충전으로 분류
                 const chargingRecord = dayRecords.find(r => {
                     if (!r.status) return false;
                     const s = r.status.toLowerCase();
@@ -1394,7 +1369,6 @@
                     };
                 }
                 
-                // 3순위: 점검/고장 확인
                 const maintenanceRecord = dayRecords.find(r => {
                     if (!r.status) return false;
                     const s = r.status.toLowerCase();
@@ -1409,7 +1383,6 @@
                     };
                 }
                 
-                // 4순위: 통신 두절 (하루 종일 미수신인 경우)
                 const allOffline = dayRecords.every(r => {
                     if (!r.status) return true;
                     const s = r.status.toLowerCase();
@@ -1424,7 +1397,6 @@
                     };
                 }
                 
-                // 기본값: 정상 대기
                 return { 
                     status: '대기', 
                     error: null, 
@@ -1432,34 +1404,38 @@
                 };
             }
 
-
             // ============================================
-            // 전역 함수들
+            // 전역 함수들 (스코프 문제 해결)
             // ============================================
             window.showTooltip = function(event, text) {
                 const tooltip = document.getElementById('tooltip');
                 tooltip.innerHTML = text.replace(/\\n/g, '<br>');
                 tooltip.style.display = 'block';
-                tooltip.style.left = event.pageX + 10 + 'px';
-                tooltip.style.top = event.pageY + 10 + 'px';
+                // 툴팁 위치 개선 (화면 밖으로 나가지 않도록)
+                const x = Math.min(event.clientX + 15, window.innerWidth - 200);
+                const y = Math.min(event.clientY + 15, window.innerHeight - 100);
+                tooltip.style.left = x + 'px';
+                tooltip.style.top = y + 'px';
             };
 
             window.hideTooltip = function() {
                 document.getElementById('tooltip').style.display = 'none';
             };
 
-            window.switchTab = function(tabName) {
-                // 탭 버튼 활성화 전환
+            // 이벤트 핸들러 문제 해결 (event 파라미터 명시)
+            window.switchTab = function(event, tabName) {
                 document.querySelectorAll('.tab').forEach(tab => {
                     tab.classList.remove('active');
                 });
                 event.target.classList.add('active');
                 
-                // 탭 콘텐츠 전환
                 document.querySelectorAll('.tab-content').forEach(content => {
                     content.classList.remove('active');
                 });
-                document.getElementById(`${tabName}-view`).classList.add('active');
+                const targetContent = document.getElementById(`${tabName}-view`);
+                if (targetContent) {
+                    targetContent.classList.add('active');
+                }
             };
 
             window.closeDetailPanel = function() {
@@ -1473,7 +1449,11 @@
                 });
                 
                 const breadcrumb = document.getElementById('breadcrumb');
-                breadcrumb.textContent = `홈 > 검색 결과 (${APP_STATE.searchResults.length}개 사이트)`;
+                if (window.APP_STATE.searchResults && window.APP_STATE.searchResults.length > 0) {
+                    breadcrumb.textContent = `홈 > 검색 결과 (${window.APP_STATE.searchResults.length}개 사이트)`;
+                } else {
+                    breadcrumb.textContent = '홈';
+                }
             };
 
             // ============================================
