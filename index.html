@@ -7,6 +7,7 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💓</text></svg>">
     
     <!-- 외부 라이브러리 -->
+    <script src="config.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dayjs@1/plugin/utc.js"></script>
@@ -585,8 +586,9 @@
         dayjs.extend(dayjs_plugin_timezone);
 
         // Supabase 설정
-        const SUPABASE_URL = "https://gkwtucqymzkvpurcpihk.supabase.co";
-        const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdrd3R1Y3F5bXprdnB1cmNwaWhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MDIxNDcsImV4cCI6MjA4OTQ3ODE0N30.V0FnaZ-BaTEYUOKfzxvQ-T4Qk4E83LNIi4GflQsURUg";
+        // config.js에서 값 가져오기
+        const SUPABASE_URL = CONFIG.SUPABASE_URL;
+        const SUPABASE_KEY = CONFIG.SUPABASE_KEY;
         
         const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
